@@ -1,0 +1,48 @@
+{
+  "status": "success",
+  "data": {
+    "file_path": "/content/sih_satellite_data/sentinel2_S2C_MSIL2A_20250128T053131_N0511_R105_T43RGM_20250128T084454_2025-01-01_2025-01-31_optical_20260902T071736Z.tif",
+    "file_name": "sentinel2_S2C_MSIL2A_20250128T053131_N0511_R105_T43RGM_20250128T084454_2025-01-01_2025-01-31_optical_20260902T071736Z.tif",
+    "format": "GeoTIFF"
+  },
+  "source": {
+    "provider": "Sentinel Hub",
+    "collection": "sentinel-2-l2a",
+    "scene_id": "S2C_MSIL2A_20250128T053131_N0511_R105_T43RGM_20250128T084454",
+    "acquisition_time": "2025-01-28T05:41:31Z"
+  },
+  "request": {
+    "bbox": [77.1, 28.5, 77.3, 28.7],
+    "start_date": "2025-01-01",
+    "end_date": "2025-01-31",
+    "modality": "optical",
+    "bands": null,
+    "max_cloud_cover": 30
+  },
+  "raster": {
+    "width": 512,
+    "height": 512,
+    "band_count": 3,
+    "dtype": "uint16",
+    "crs": "EPSG:4326",
+    "bounds": {
+      "left": 77.1,
+      "bottom": 28.5,
+      "right": 77.3,
+      "top": 28.7
+    },
+    "resolution": {
+      "x": 0.000390625,
+      "y": 0.000390625
+    },
+    "nodata": null
+  },
+  "quality": {
+    "cloud_cover": 0.0,
+    "valid": true
+  },
+  "flags": {
+    "optical_quality_poor": false,
+    "sar_recommended": false
+  }
+}
