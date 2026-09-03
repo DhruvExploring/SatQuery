@@ -4,3 +4,19 @@ shapely
 pyproj
 pydantic
 fastmcp
+python-dotenv
+
+# Orchestrator
+langgraph
+langchain
+langchain-core
+langchain-openai
+langchain-skillkit
+langmem
+
+# API server
+fastapi
+uvicorn[standard]
+
+# Dev / test
+pytest
