@@ -1,0 +1,26 @@
+{
+  "file_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_2_fetch_multispectral_imagery\\test_runs\\sample_multispectral_output.tif",
+  "indices": [
+    "NDVI",
+    "EVI",
+    "SAVI",
+    "GNDVI",
+    "NDRE_B5",
+    "NDRE_B7",
+    "NDMI",
+    "NDWI",
+    "MSAVI",
+    "NBR"
+  ],
+  "band_mapping": {
+    "Band_1": "B02",
+    "Band_2": "B03",
+    "Band_3": "B04",
+    "Band_4": "B05",
+    "Band_5": "B07",
+    "Band_6": "B08",
+    "Band_7": "B11",
+    "Band_8": "B12"
+  },
+  "calculate_heuristic_classification": true
+}
