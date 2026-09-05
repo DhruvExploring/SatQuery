@@ -1,35 +1,49 @@
-# Python
+# Credentials & environment variables (CRITICAL)
+.env
+*.env
+.env.local
+.env.*.local
+credentials.json
+secrets.yaml
+*.pem
+*.key
+
+# Python bytecode & cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
-.eggs/
-build/
-dist/
+*.so
+.pytest_cache/
+.coverage
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
 
 # Virtual environments
-.venv/
 venv/
+.venv/
 env/
+ENV/
 
-# Jupyter
-.ipynb_checkpoints/
+# Temporary generated test & demonstration artifacts
+output_optical/
+output_multispectral/
+output_sar/
+output_indices/
+phase2_test_scratch/
+phase2_demonstrations/
+phase3_agent_outputs/
 
-# Environment / secrets
-.env
-.env.*
-!.env.example
-*.pem
-
-# Satellite tool output data
-sih_satellite_data/
+# Large GeoTIFF outputs outside test_runs
 *.tif
 *.tiff
+!**/test_runs/*.tif
+!**/test_runs/*.tiff
 
-# OS
+# OS and IDE files
 .DS_Store
 Thumbs.db
-
-# Editors
+desktop.ini
 .vscode/
 .idea/

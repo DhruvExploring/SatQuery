@@ -1,0 +1,532 @@
+{
+  "status": "success",
+  "file": {
+    "file_name": "sample_multispectral_output.tif",
+    "file_path": "C:\\Users\\User\\Desktop\\Tools\\Tool_2_fetch_multispectral_imagery\\test_runs\\sample_multispectral_output.tif",
+    "file_size_bytes": 1216810,
+    "driver": "GTiff"
+  },
+  "spatial": {
+    "crs": "EPSG:4326",
+    "is_geographic": true,
+    "is_projected": false,
+    "coordinate_units": "degrees",
+    "resolution": {
+      "x": 0.0007812500000000111,
+      "y": 0.0007812499999999972,
+      "unit": "degrees"
+    },
+    "bounds_native": {
+      "left": 77.1,
+      "bottom": 28.5,
+      "right": 77.3,
+      "top": 28.7
+    },
+    "bounds_wgs84": {
+      "min_lon": 77.1,
+      "min_lat": 28.5,
+      "max_lon": 77.3,
+      "max_lat": 28.7
+    },
+    "approx_area_km2": 432.29,
+    "transform": [
+      0.00078125,
+      0.0,
+      77.1,
+      0.0,
+      -0.00078125,
+      28.7,
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "raster": {
+    "width": 256,
+    "height": 256,
+    "total_pixels": 65536,
+    "band_count": 8,
+    "block_shapes": [
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ],
+      [
+        8,
+        256
+      ]
+    ],
+    "compression": "deflate",
+    "nodata_definition": null
+  },
+  "bands": [
+    {
+      "band_index": 1,
+      "description": "Band_1",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 2,
+      "description": "Band_2",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 3,
+      "description": "Band_3",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 4,
+      "description": "Band_4",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 5,
+      "description": "Band_5",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 6,
+      "description": "Band_6",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 7,
+      "description": "Band_7",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    },
+    {
+      "band_index": 8,
+      "description": "Band_8",
+      "dtype": "float32",
+      "valid_pixel_count": 65536,
+      "valid_pixel_fraction": 1.0,
+      "nodata_pixel_count": 0,
+      "nan_pixel_count": 0,
+      "inf_pixel_count": 0
+    }
+  ],
+  "statistics": {
+    "Band_1": {
+      "min": 0.0008,
+      "max": 0.4934,
+      "mean": 0.0602,
+      "median": 0.0572,
+      "std_dev": 0.0292,
+      "p01": 0.0134,
+      "p05": 0.0205,
+      "p25": 0.038,
+      "p50": 0.0572,
+      "p75": 0.0795,
+      "p95": 0.1045,
+      "p99": 0.1399
+    },
+    "Band_2": {
+      "min": 0.0157,
+      "max": 0.529,
+      "mean": 0.0787,
+      "median": 0.0764,
+      "std_dev": 0.0294,
+      "p01": 0.0319,
+      "p05": 0.0394,
+      "p25": 0.0573,
+      "p50": 0.0764,
+      "p75": 0.0967,
+      "p95": 0.1222,
+      "p99": 0.1632
+    },
+    "Band_3": {
+      "min": 0.0157,
+      "max": 0.5677,
+      "mean": 0.0845,
+      "median": 0.082,
+      "std_dev": 0.0366,
+      "p01": 0.0252,
+      "p05": 0.0342,
+      "p25": 0.0569,
+      "p50": 0.082,
+      "p75": 0.1079,
+      "p95": 0.1392,
+      "p99": 0.1919
+    },
+    "Band_4": {
+      "min": 0.0146,
+      "max": 0.5663,
+      "mean": 0.1122,
+      "median": 0.1096,
+      "std_dev": 0.0306,
+      "p01": 0.0545,
+      "p05": 0.075,
+      "p25": 0.0926,
+      "p50": 0.1096,
+      "p75": 0.1267,
+      "p95": 0.1596,
+      "p99": 0.2141
+    },
+    "Band_5": {
+      "min": 0.006,
+      "max": 0.5655,
+      "mean": 0.1635,
+      "median": 0.1591,
+      "std_dev": 0.0374,
+      "p01": 0.0658,
+      "p05": 0.1195,
+      "p25": 0.1422,
+      "p50": 0.1591,
+      "p75": 0.1788,
+      "p95": 0.2283,
+      "p99": 0.2909
+    },
+    "Band_6": {
+      "min": 0.0,
+      "max": 0.7007,
+      "mean": 0.1784,
+      "median": 0.1731,
+      "std_dev": 0.0481,
+      "p01": 0.0495,
+      "p05": 0.1204,
+      "p25": 0.1504,
+      "p50": 0.1731,
+      "p75": 0.1994,
+      "p95": 0.2606,
+      "p99": 0.3391
+    },
+    "Band_7": {
+      "min": 0.0101,
+      "max": 0.6477,
+      "mean": 0.1598,
+      "median": 0.1518,
+      "std_dev": 0.0411,
+      "p01": 0.056,
+      "p05": 0.1167,
+      "p25": 0.1368,
+      "p50": 0.1518,
+      "p75": 0.1736,
+      "p95": 0.2372,
+      "p99": 0.3022
+    },
+    "Band_8": {
+      "min": 0.0081,
+      "max": 0.7498,
+      "mean": 0.1206,
+      "median": 0.1157,
+      "std_dev": 0.0408,
+      "p01": 0.0388,
+      "p05": 0.0714,
+      "p25": 0.0954,
+      "p50": 0.1157,
+      "p75": 0.1372,
+      "p95": 0.1919,
+      "p99": 0.264
+    }
+  },
+  "histograms": {
+    "Band_1": {
+      "bin_edges": [
+        0.0008,
+        0.0501,
+        0.0993,
+        0.1486,
+        0.1978,
+        0.2471,
+        0.2964,
+        0.3456,
+        0.3949,
+        0.4441,
+        0.4934
+      ],
+      "counts": [
+        26641,
+        33864,
+        4516,
+        313,
+        153,
+        21,
+        15,
+        10,
+        2,
+        1
+      ]
+    },
+    "Band_2": {
+      "bin_edges": [
+        0.0157,
+        0.067,
+        0.1184,
+        0.1697,
+        0.221,
+        0.2724,
+        0.3237,
+        0.375,
+        0.4263,
+        0.4777,
+        0.529
+      ],
+      "counts": [
+        24787,
+        36489,
+        3699,
+        329,
+        156,
+        45,
+        13,
+        9,
+        7,
+        2
+      ]
+    },
+    "Band_3": {
+      "bin_edges": [
+        0.0157,
+        0.0709,
+        0.1261,
+        0.1813,
+        0.2365,
+        0.2917,
+        0.3469,
+        0.4021,
+        0.4573,
+        0.5125,
+        0.5677
+      ],
+      "counts": [
+        25402,
+        33499,
+        5805,
+        532,
+        200,
+        64,
+        14,
+        11,
+        7,
+        2
+      ]
+    },
+    "Band_4": {
+      "bin_edges": [
+        0.0146,
+        0.0698,
+        0.1249,
+        0.1801,
+        0.2353,
+        0.2905,
+        0.3456,
+        0.4008,
+        0.456,
+        0.5111,
+        0.5663
+      ],
+      "counts": [
+        1459,
+        46208,
+        16251,
+        1194,
+        282,
+        99,
+        20,
+        11,
+        6,
+        6
+      ]
+    },
+    "Band_5": {
+      "bin_edges": [
+        0.006,
+        0.062,
+        0.1179,
+        0.1739,
+        0.2298,
+        0.2858,
+        0.3417,
+        0.3977,
+        0.4536,
+        0.5096,
+        0.5655
+      ],
+      "counts": [
+        634,
+        2266,
+        42879,
+        16604,
+        2380,
+        642,
+        98,
+        23,
+        8,
+        2
+      ]
+    },
+    "Band_6": {
+      "bin_edges": [
+        0.0,
+        0.0701,
+        0.1401,
+        0.2102,
+        0.2803,
+        0.3503,
+        0.4204,
+        0.4905,
+        0.5606,
+        0.6306,
+        0.7007
+      ],
+      "counts": [
+        811,
+        9396,
+        43371,
+        9770,
+        1664,
+        412,
+        87,
+        16,
+        6,
+        3
+      ]
+    },
+    "Band_7": {
+      "bin_edges": [
+        0.0101,
+        0.0739,
+        0.1376,
+        0.2014,
+        0.2651,
+        0.3289,
+        0.3927,
+        0.4564,
+        0.5202,
+        0.5839,
+        0.6477
+      ],
+      "counts": [
+        792,
+        16513,
+        40299,
+        6292,
+        1287,
+        286,
+        52,
+        12,
+        1,
+        2
+      ]
+    },
+    "Band_8": {
+      "bin_edges": [
+        0.0081,
+        0.0823,
+        0.1564,
+        0.2306,
+        0.3048,
+        0.379,
+        0.4531,
+        0.5273,
+        0.6015,
+        0.6756,
+        0.7498
+      ],
+      "counts": [
+        7808,
+        49122,
+        7305,
+        988,
+        250,
+        53,
+        7,
+        1,
+        1,
+        1
+      ]
+    }
+  },
+  "integrity": {
+    "has_nodata_definition": false,
+    "contains_nodata_pixels": false,
+    "has_nodata_holes": false,
+    "has_nan": false,
+    "has_inf": false,
+    "empty_bands": [],
+    "constant_bands": []
+  },
+  "compatibility": {
+    "compared_with_file": "sample_optical_output.tif",
+    "same_crs": true,
+    "same_dimensions": true,
+    "same_resolution": true,
+    "same_bounds": true,
+    "same_grid_alignment": true,
+    "pixelwise_operation_ready": true,
+    "note": "pixelwise_operation_ready confirms spatial grid alignment; scientific compatibility must be verified by task requirements."
+  },
+  "quality": {
+    "is_readable": true,
+    "is_georeferenced": true,
+    "is_numerically_usable": true,
+    "is_valid_for_ml": true,
+    "ml_readiness_scope": "general numerical/raster processing compatibility; task-specific model constraints must be validated separately."
+  },
+  "recommendations": [
+    "Raster is georeferenced in EPSG:4326 (degrees).",
+    "Contains 8 band(s) with dimensions 256x256 pixels.",
+    "Raster passes data integrity checks and is ready for numerical analysis and ML workflows.",
+    "Geometric pixel-wise grid operations with 'sample_optical_output.tif' are fully aligned and supported."
+  ]
+}

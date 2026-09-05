@@ -1,0 +1,6 @@
+{
+  "lulc_raster_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_8_analyze_spatial_landcover_terrain\\test_runs\\sample_worldcover_10m.tif",
+  "dem_raster_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_8_analyze_spatial_landcover_terrain\\test_runs\\sample_copernicus_dem_30m.tif",
+  "zone_mask_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t1_vs_sample_indices_t2_NDVI_change_mask.tif",
+  "calculate_fragmentation": true
+}
