@@ -1,0 +1,11 @@
+{
+  "bbox": [77.10, 28.50, 77.30, 28.70],
+  "start_date": "2025-01-01",
+  "end_date": "2025-01-31",
+  "scene_selection": "most_recent",
+  "polarization": ["VV", "VH"],
+  "orbit_direction": "BOTH",
+  "width": 512,
+  "height": 512,
+  "crs": "EPSG:4326"
+}

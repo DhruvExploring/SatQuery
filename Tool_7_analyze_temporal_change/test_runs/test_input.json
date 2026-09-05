@@ -1,0 +1,12 @@
+{
+  "raster_before_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t1.tif",
+  "raster_after_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t2.tif",
+  "band_selection": "NDVI",
+  "threshold_type": "absolute",
+  "threshold_value": 0.15,
+  "relative_change_threshold_percent": 20.0,
+  "mask_encoding": "bipolar_3class",
+  "output_dir": "c:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs",
+  "generate_difference_raster": true,
+  "generate_change_mask": true
+}

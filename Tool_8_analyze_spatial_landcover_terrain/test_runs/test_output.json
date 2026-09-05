@@ -1,0 +1,287 @@
+{
+  "status": "success",
+  "tool": "Tool_8_analyze_spatial_landcover_terrain",
+  "timestamp_utc": "2026-09-04T13:27:45.906924+00:00",
+  "provenance": {
+    "lulc_raster_file": "sample_worldcover_10m.tif",
+    "dem_raster_file": "sample_copernicus_dem_30m.tif",
+    "zone_mask_file": "sample_indices_t1_vs_sample_indices_t2_NDVI_change_mask.tif",
+    "crs": "EPSG:4326",
+    "grid_dimensions": {
+      "width": 256,
+      "height": 256
+    },
+    "spatial_bounds": {
+      "left": 77.1,
+      "bottom": 28.5,
+      "right": 77.3,
+      "top": 28.7
+    },
+    "pixel_ground_resolution_m": {
+      "width_m": 76.42,
+      "height_m": 86.59,
+      "area_m2": 6616.45
+    },
+    "resampling_actions": []
+  },
+  "spatial_coverage": {
+    "total_raster_area_km2": 433.6159,
+    "valid_aoi_area_km2": 433.6159,
+    "valid_fraction_percent": 100.0,
+    "total_pixels": 65536,
+    "valid_pixels": 65536,
+    "nodata_pixels": 0
+  },
+  "dominant_landcover": {
+    "code": 40,
+    "name": "Cropland",
+    "area_km2": 267.0334,
+    "percentage": 61.58
+  },
+  "landcover_composition": {
+    "10": {
+      "class_name": "Tree cover",
+      "pixel_count": 13200,
+      "area_km2": 87.3372,
+      "area_hectares": 8733.72,
+      "percentage_of_valid_aoi": 20.14
+    },
+    "20": {
+      "class_name": "Shrubland",
+      "pixel_count": 3300,
+      "area_km2": 21.8343,
+      "area_hectares": 2183.43,
+      "percentage_of_valid_aoi": 5.04
+    },
+    "30": {
+      "class_name": "Grassland",
+      "pixel_count": 2400,
+      "area_km2": 15.8795,
+      "area_hectares": 1587.95,
+      "percentage_of_valid_aoi": 3.66
+    },
+    "40": {
+      "class_name": "Cropland",
+      "pixel_count": 40359,
+      "area_km2": 267.0334,
+      "area_hectares": 26703.34,
+      "percentage_of_valid_aoi": 61.58
+    },
+    "50": {
+      "class_name": "Built-up",
+      "pixel_count": 1630,
+      "area_km2": 10.7848,
+      "area_hectares": 1078.48,
+      "percentage_of_valid_aoi": 2.49
+    },
+    "60": {
+      "class_name": "Bare / sparse vegetation",
+      "pixel_count": 1575,
+      "area_km2": 10.4209,
+      "area_hectares": 1042.09,
+      "percentage_of_valid_aoi": 2.4
+    },
+    "80": {
+      "class_name": "Permanent water bodies",
+      "pixel_count": 3072,
+      "area_km2": 20.3257,
+      "area_hectares": 2032.57,
+      "percentage_of_valid_aoi": 4.69
+    }
+  },
+  "landscape_fragmentation": {
+    "Tree cover": {
+      "patch_count": 1,
+      "mean_patch_size_km2": 87.3372,
+      "mean_patch_size_hectares": 8733.72,
+      "largest_patch_index_percent": 100.0,
+      "fragmentation_level": "Continuous / Low Fragmentation"
+    },
+    "Shrubland": {
+      "patch_count": 1,
+      "mean_patch_size_km2": 21.8343,
+      "mean_patch_size_hectares": 2183.43,
+      "largest_patch_index_percent": 100.0,
+      "fragmentation_level": "Continuous / Low Fragmentation"
+    },
+    "Grassland": {
+      "patch_count": 1,
+      "mean_patch_size_km2": 15.8795,
+      "mean_patch_size_hectares": 1587.95,
+      "largest_patch_index_percent": 100.0,
+      "fragmentation_level": "Continuous / Low Fragmentation"
+    },
+    "Cropland": {
+      "patch_count": 2,
+      "mean_patch_size_km2": 133.5167,
+      "mean_patch_size_hectares": 13351.67,
+      "largest_patch_index_percent": 67.45,
+      "fragmentation_level": "Moderately Fragmented"
+    }
+  },
+  "terrain_profile": {
+    "source_dem_file": "sample_copernicus_dem_30m.tif",
+    "elevation_meters": {
+      "mean_elevation_m": 339.88,
+      "median_elevation_m": 300.17,
+      "min_elevation_m": 206.63,
+      "max_elevation_m": 583.9,
+      "std_elevation_m": 100.18,
+      "percentiles_m": {
+        "p05": 235.07,
+        "p25": 264.64,
+        "p75": 396.52,
+        "p95": 549.12
+      }
+    },
+    "slope_profile": {
+      "mean_slope_deg": 1.02,
+      "median_slope_deg": 0.97,
+      "min_slope_deg": 0.01,
+      "max_slope_deg": 2.52,
+      "std_slope_deg": 0.66,
+      "slope_classes": {
+        "flat_to_gentle_0_to_5_deg": {
+          "pixel_count": 65536,
+          "percentage": 100.0
+        },
+        "moderate_5_to_15_deg": {
+          "pixel_count": 0,
+          "percentage": 0.0
+        },
+        "steep_15_to_30_deg": {
+          "pixel_count": 0,
+          "percentage": 0.0
+        },
+        "very_steep_above_30_deg": {
+          "pixel_count": 0,
+          "percentage": 0.0
+        }
+      }
+    }
+  },
+  "zonal_cross_tabulation": {
+    "-1": {
+      "zone_label": "Significant Decrease / Loss",
+      "total_pixel_count": 6396,
+      "total_area_km2": 42.3188,
+      "total_area_hectares": 4231.88,
+      "percentage_of_aoi": 9.76,
+      "landcover_impact_breakdown": {
+        "Tree cover": {
+          "class_code": 10,
+          "pixel_count": 6396,
+          "area_km2": 42.3188,
+          "area_hectares": 4231.88,
+          "percentage_of_zone": 100.0
+        }
+      },
+      "topography": {
+        "mean_elevation_m": 491.09,
+        "min_elevation_m": 357.78,
+        "max_elevation_m": 583.9,
+        "mean_slope_deg": 1.75
+      }
+    },
+    "0": {
+      "zone_label": "Stable / Unaltered",
+      "total_pixel_count": 55560,
+      "total_area_km2": 367.6101,
+      "total_area_hectares": 36761.01,
+      "percentage_of_aoi": 84.78,
+      "landcover_impact_breakdown": {
+        "Tree cover": {
+          "class_code": 10,
+          "pixel_count": 6804,
+          "area_km2": 45.0183,
+          "area_hectares": 4501.83,
+          "percentage_of_zone": 12.25
+        },
+        "Shrubland": {
+          "class_code": 20,
+          "pixel_count": 3300,
+          "area_km2": 21.8343,
+          "area_hectares": 2183.43,
+          "percentage_of_zone": 5.94
+        },
+        "Grassland": {
+          "class_code": 30,
+          "pixel_count": 2400,
+          "area_km2": 15.8795,
+          "area_hectares": 1587.95,
+          "percentage_of_zone": 4.32
+        },
+        "Cropland": {
+          "class_code": 40,
+          "pixel_count": 37649,
+          "area_km2": 249.1028,
+          "area_hectares": 24910.28,
+          "percentage_of_zone": 67.76
+        },
+        "Built-up": {
+          "class_code": 50,
+          "pixel_count": 1630,
+          "area_km2": 10.7848,
+          "area_hectares": 1078.48,
+          "percentage_of_zone": 2.93
+        },
+        "Bare / sparse vegetation": {
+          "class_code": 60,
+          "pixel_count": 1425,
+          "area_km2": 9.4284,
+          "area_hectares": 942.84,
+          "percentage_of_zone": 2.56
+        },
+        "Permanent water bodies": {
+          "class_code": 80,
+          "pixel_count": 2352,
+          "area_km2": 15.5619,
+          "area_hectares": 1556.19,
+          "percentage_of_zone": 4.23
+        }
+      },
+      "topography": {
+        "mean_elevation_m": 328.44,
+        "min_elevation_m": 206.63,
+        "max_elevation_m": 583.53,
+        "mean_slope_deg": 0.94
+      }
+    },
+    "1": {
+      "zone_label": "Significant Increase / Gain",
+      "total_pixel_count": 3580,
+      "total_area_km2": 23.6869,
+      "total_area_hectares": 2368.69,
+      "percentage_of_aoi": 5.46,
+      "landcover_impact_breakdown": {
+        "Cropland": {
+          "class_code": 40,
+          "pixel_count": 2710,
+          "area_km2": 17.9306,
+          "area_hectares": 1793.06,
+          "percentage_of_zone": 75.7
+        },
+        "Bare / sparse vegetation": {
+          "class_code": 60,
+          "pixel_count": 150,
+          "area_km2": 0.9925,
+          "area_hectares": 99.25,
+          "percentage_of_zone": 4.19
+        },
+        "Permanent water bodies": {
+          "class_code": 80,
+          "pixel_count": 720,
+          "area_km2": 4.7638,
+          "area_hectares": 476.38,
+          "percentage_of_zone": 20.11
+        }
+      },
+      "topography": {
+        "mean_elevation_m": 247.31,
+        "min_elevation_m": 213.8,
+        "max_elevation_m": 277.02,
+        "mean_slope_deg": 0.96
+      }
+    }
+  }
+}

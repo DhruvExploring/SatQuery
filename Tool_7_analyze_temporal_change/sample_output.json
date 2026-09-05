@@ -1,0 +1,188 @@
+{
+  "status": "success",
+  "tool": "Tool_7_analyze_temporal_change",
+  "timestamp_utc": "2026-09-04T13:04:49.044537+00:00",
+  "band_evaluated": {
+    "band_name": "NDVI",
+    "t1_band_index": 1,
+    "t2_band_index": 1
+  },
+  "provenance": {
+    "raster_before": "C:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t1.tif",
+    "raster_after": "C:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t2.tif",
+    "crs": "EPSG:4326",
+    "grid_dimensions": {
+      "width": 256,
+      "height": 256
+    },
+    "spatial_bounds": {
+      "left": 77.1,
+      "bottom": 28.5,
+      "right": 77.3,
+      "top": 28.7
+    },
+    "pixel_ground_resolution_m2": 6616.45
+  },
+  "threshold_parameters": {
+    "threshold_type": "absolute",
+    "threshold_value": 0.15,
+    "threshold_description": "Absolute Delta >= +/-0.1500",
+    "effective_loss_threshold": -0.15,
+    "effective_gain_threshold": 0.15,
+    "relative_change_filter_percent": 20.0
+  },
+  "spatial_coverage": {
+    "total_raster_area_km2": 433.6159,
+    "valid_aoi_area_km2": 433.6159,
+    "valid_fraction_percent": 100.0,
+    "total_pixels": 65536,
+    "valid_pixels": 65536,
+    "masked_nodata_pixels": 0
+  },
+  "change_summary": {
+    "significant_decrease": {
+      "pixel_count": 6396,
+      "area_km2": 42.3188,
+      "area_hectares": 4231.88,
+      "percentage_of_valid_aoi": 9.76
+    },
+    "stable_unaltered": {
+      "pixel_count": 55560,
+      "area_km2": 367.6101,
+      "area_hectares": 36761.01,
+      "percentage_of_valid_aoi": 84.78
+    },
+    "significant_increase": {
+      "pixel_count": 3580,
+      "area_km2": 23.6869,
+      "area_hectares": 2368.69,
+      "percentage_of_valid_aoi": 5.46
+    },
+    "net_change_area_km2": -18.6319
+  },
+  "severity_distribution": {
+    "major_decrease": {
+      "pixel_count": 6395,
+      "area_km2": 42.3122,
+      "area_hectares": 4231.22,
+      "percentage_of_valid_aoi": 9.76
+    },
+    "moderate_decrease": {
+      "pixel_count": 1,
+      "area_km2": 0.0066,
+      "area_hectares": 0.66,
+      "percentage_of_valid_aoi": 0.0
+    },
+    "stable": {
+      "pixel_count": 55560,
+      "area_km2": 367.6101,
+      "area_hectares": 36761.01,
+      "percentage_of_valid_aoi": 84.78
+    },
+    "moderate_increase": {
+      "pixel_count": 3512,
+      "area_km2": 23.237,
+      "area_hectares": 2323.7,
+      "percentage_of_valid_aoi": 5.36
+    },
+    "major_increase": {
+      "pixel_count": 68,
+      "area_km2": 0.4499,
+      "area_hectares": 44.99,
+      "percentage_of_valid_aoi": 0.1
+    }
+  },
+  "delta_statistics": {
+    "mean_delta": -0.0303,
+    "median_delta": -0.0008,
+    "std_delta": 0.1501,
+    "min_delta": -0.5681,
+    "max_delta": 0.3377,
+    "percentiles": {
+      "p01": -0.4921,
+      "p05": -0.449,
+      "p25": -0.0137,
+      "p50": -0.0008,
+      "p75": 0.0111,
+      "p95": 0.2131,
+      "p99": 0.2718
+    },
+    "mean_relative_shift_percent": -20.1,
+    "median_relative_shift_percent": -0.23
+  },
+  "delta_histogram": [
+    {
+      "bin_start": -0.5681,
+      "bin_end": -0.4775,
+      "count": 1289,
+      "frequency_percent": 1.97
+    },
+    {
+      "bin_start": -0.4775,
+      "bin_end": -0.3869,
+      "count": 4902,
+      "frequency_percent": 7.48
+    },
+    {
+      "bin_start": -0.3869,
+      "bin_end": -0.2964,
+      "count": 207,
+      "frequency_percent": 0.32
+    },
+    {
+      "bin_start": -0.2964,
+      "bin_end": -0.2058,
+      "count": 0,
+      "frequency_percent": 0.0
+    },
+    {
+      "bin_start": -0.2058,
+      "bin_end": -0.1152,
+      "count": 0,
+      "frequency_percent": 0.0
+    },
+    {
+      "bin_start": -0.1152,
+      "bin_end": -0.0246,
+      "count": 2796,
+      "frequency_percent": 4.27
+    },
+    {
+      "bin_start": -0.0246,
+      "bin_end": 0.066,
+      "count": 52741,
+      "frequency_percent": 80.48
+    },
+    {
+      "bin_start": 0.066,
+      "bin_end": 0.1566,
+      "count": 9,
+      "frequency_percent": 0.01
+    },
+    {
+      "bin_start": 0.1566,
+      "bin_end": 0.2472,
+      "count": 1734,
+      "frequency_percent": 2.65
+    },
+    {
+      "bin_start": 0.2472,
+      "bin_end": 0.3377,
+      "count": 1858,
+      "frequency_percent": 2.84
+    }
+  ],
+  "generated_products": {
+    "difference_raster_path": "C:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t1_vs_sample_indices_t2_NDVI_difference.tif",
+    "change_mask_path": "C:\\Users\\User\\Desktop\\Tools\\Tool_7_analyze_temporal_change\\test_runs\\sample_indices_t1_vs_sample_indices_t2_NDVI_change_mask.tif",
+    "mask_encoding": "bipolar_3class",
+    "mask_legend": {
+      "-2": "N/A",
+      "-1": "Significant Loss / Decrease",
+      "0": "Stable / Insignificant Change",
+      "1": "Significant Gain / Increase",
+      "2": "N/A",
+      "-128": "NoData / Masked Out"
+    }
+  }
+}
