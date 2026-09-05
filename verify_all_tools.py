@@ -46,11 +46,10 @@ def verify_ecosystem() -> bool:
             print(f"  [FAIL] {name:<8} | Module: {mod_path:<65} | Error: {e}")
             all_pass = False
 
-    # Also verify Master Server and Orchestration
+    # Master MCP server and chained pipelines (not the LangGraph API).
     for name, mod_path in [
         ("Server", "satquery_server"),
         ("Workflows", "satquery_workflows"),
-        ("Phase 3 Agent", "run_phase3"),
     ]:
         try:
             mod = importlib.import_module(mod_path)

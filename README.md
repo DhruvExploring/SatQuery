@@ -6,7 +6,9 @@
 [![Raster Engine: GDAL/Rasterio](https://img.shields.io/badge/Rasterio-1.3%2B-blueviolet.svg)](https://rasterio.readthedocs.io/)
 [![EO Providers: Sentinel Hub / ERA5](https://img.shields.io/badge/Sensors-Sentinel--1%20%7C%20Sentinel--2%20%7C%20ERA5-red.svg)](https://dataspace.copernicus.eu/)
 
-**SatQuery** is an autonomous, production-grade geospatial Earth Observation (EO) intelligence suite designed specifically for **Model Context Protocol (MCP) servers**, **LangGraph autonomous agents**, and **geospatial machine learning pipelines**. 
+**SatQuery** is an autonomous, production-grade geospatial Earth Observation (EO) intelligence suite designed specifically for **Model Context Protocol (MCP) servers**, **LangGraph autonomous agents**, and **geospatial machine learning pipelines**.
+
+This README is the 8-tool science suite. The live HTTP API (Tools 1–4, LangGraph) lives in `backend/`; orchestrator docs: [backend/orchestrator/README.md](backend/orchestrator/README.md). Walkthrough PDF: [docs/SatQuery_Orchestration_Guide.pdf](docs/SatQuery_Orchestration_Guide.pdf). From the SatQuery root, launch with the venv interpreter so `--reload` does not drop packages: `.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload` (Linux/macOS: `.venv/bin/python -m uvicorn backend.main:app --reload`).
 
 SatQuery transforms raw multi-modal satellite observations (Sentinel-2 visual optical, Sentinel-2 8-band surface reflectance, Sentinel-1 synthetic aperture radar, and ECMWF ERA5 reanalysis weather data) into **unit-aware, mathematically validated, deterministic, and ML/LLM-ready analytical telemetry**.
 
@@ -53,7 +55,7 @@ SatQuery transforms raw multi-modal satellite observations (Sentinel-2 visual op
                       ▼                          ▼
        ┌────────────────────────────────────────────────────────────────────────┐
        │         AUTONOMOUS AGENT ORCHESTRATION & DECISION SYNTHESIS            │
-       │       (satquery_server.py FastMCP / satquery_workflows.py Pipelines)   │
+       │   LangGraph: backend/orchestrator/  ·  MCP: satquery_server.py         │
        └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -89,7 +91,10 @@ flowchart TD
 ## 2. Repository Directory Map & File Purpose Guide
 
 ```text
-Tools/
+SatQuery/
+├── backend/                            # Live HTTP API + LangGraph orchestrator (Tools 1–4)
+│   ├── main.py                         # FastAPI app (uvicorn backend.main:app)
+│   └── orchestrator/                   # See backend/orchestrator/README.md
 ├── satquery_server.py                  # Master FastMCP Server exposing all 8 tools
 ├── satquery_workflows.py               # Autonomous multi-tool chained scientific pipelines (Pipelines A, B, C)
 ├── test_phase2_integration.py          # Offline synthetic integration test harness (Zero network quota required)
