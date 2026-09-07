@@ -7,7 +7,7 @@ def test_route_call_tool_goes_to_execute():
             "query": "fetch",
             "plan": {
                 "action": "call_tool",
-                "tool": "fetch_satellite_imagery",
+                "tool": "fetch_optical_imagery",
                 "args": {},
                 "reason": "test",
             },

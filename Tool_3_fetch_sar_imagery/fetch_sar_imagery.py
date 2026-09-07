@@ -221,55 +221,109 @@ class SARSatelliteRequest(BaseModel):
 # 5. STAC Catalog Discovery & Intent-Aware Scene Selection
 # =============================================================================
 
-def search_sentinel1_catalog(request: SARSatelliteRequest, max_results: int = 20) -> list[dict]:
+def _feature_to_sar_scene(feature: dict) -> dict:
+    props = feature.get("properties") or {}
+    orbit_raw = props.get("sat:orbit_state") or props.get("sat:orbit_direction") or "UNKNOWN"
+    polarizations = props.get("sar:polarizations") or ["VV", "VH"]
+    return {
+        "scene_id": feature.get("id"),
+        "collection": "sentinel-1-grd",
+        "acquisition_time": props.get("datetime"),
+        "orbit_direction": str(orbit_raw).upper(),
+        "polarization": [str(p).upper() for p in polarizations],
+        "instrument_mode": str(props.get("sar:instrument_mode") or "IW").upper(),
+        "bbox": feature.get("bbox"),
+        "geometry": feature.get("geometry"),
+    }
+
+
+def _polarization_ok(scene: dict, requested: list[str]) -> bool:
+    available = set(scene.get("polarization") or [])
+    if not available:
+        return True
+    return set(requested).issubset(available)
+
+
+def filter_sar_scenes(
+    scenes: list[dict],
+    request: SARSatelliteRequest,
+    *,
+    match_orbit: bool,
+) -> list[dict]:
+    """Keep IW scenes that expose the requested polarizations, optionally matching orbit."""
+    filtered: list[dict] = []
+    for scene in scenes:
+        mode = scene.get("instrument_mode") or "IW"
+        if mode not in {"IW", "UNKNOWN"}:
+            continue
+        if not scene.get("scene_id") or not scene.get("acquisition_time"):
+            continue
+        if not _polarization_ok(scene, request.polarization):
+            continue
+        if match_orbit and request.orbit_direction != "BOTH":
+            if scene.get("orbit_direction") != request.orbit_direction:
+                continue
+        filtered.append(scene)
+    return filtered
+
+
+def search_sentinel1_catalog(request: SARSatelliteRequest, max_results: int = 50) -> list[dict]:
     datetime_range = f"{request.start_date}T00:00:00Z/{request.end_date}T23:59:59Z"
-    payload = {
+    payload: dict[str, Any] = {
         "bbox": request.bbox,
         "datetime": datetime_range,
         "collections": ["sentinel-1-grd"],
-        "limit": min(10, max_results),
+        "limit": min(50, max_results),
     }
 
-    response = http_client.request("POST", CONFIG.catalog_url, json=payload)
-    if not response.ok:
-        try:
-            error_data = response.json()
-        except ValueError:
-            error_data = response.text
-        raise RuntimeError(f"Sentinel-1 Catalog search failed (HTTP {response.status_code}): {error_data}")
+    all_features: list[dict] = []
+    while len(all_features) < max_results:
+        response = http_client.request("POST", CONFIG.catalog_url, json=payload)
+        if not response.ok:
+            try:
+                error_data = response.json()
+            except ValueError:
+                error_data = response.text
+            raise RuntimeError(f"Sentinel-1 Catalog search failed (HTTP {response.status_code}): {error_data}")
 
-    features = response.json().get("features", [])
-    scenes = []
-    for f in features:
-        props = f.get("properties", {})
-        orbit_state = props.get("sat:orbit_state", "UNKNOWN").upper()
-        if request.orbit_direction != "BOTH" and orbit_state != request.orbit_direction:
-            continue
-        scenes.append({
-            "scene_id": f.get("id"),
-            "collection": "sentinel-1-grd",
-            "acquisition_time": props.get("datetime"),
-            "orbit_direction": orbit_state,
-            "polarization": props.get("sar:polarizations", ["VV", "VH"]),
-            "instrument_mode": props.get("sar:instrument_mode", "IW"),
-            "bbox": f.get("bbox"),
-            "geometry": f.get("geometry"),
-        })
-    return scenes
+        data = response.json()
+        features = data.get("features") or []
+        all_features.extend(features)
+        next_val = (data.get("context") or {}).get("next")
+        if not next_val or not features:
+            break
+        payload["next"] = next_val
+        remaining = max_results - len(all_features)
+        if remaining <= 0:
+            break
+        payload["limit"] = min(50, remaining)
+
+    return [_feature_to_sar_scene(f) for f in all_features[:max_results]]
 
 
 def select_best_sar_scene(scenes: list[dict], request: SARSatelliteRequest) -> dict | None:
-    if not scenes:
+    """Pick the best IW scene that matches the requested orbit. No orbit substitution."""
+    matching = filter_sar_scenes(scenes, request, match_orbit=True)
+    if not matching:
         return None
-    
+
     if request.scene_selection == "closest_to_start_date":
         target_dt = datetime.fromisoformat(f"{request.start_date}T00:00:00+00:00")
-        return min(scenes, key=lambda s: abs(datetime.fromisoformat(s["acquisition_time"].replace("Z", "+00:00")) - target_dt))
-    elif request.scene_selection == "closest_to_end_date":
+        return min(
+            matching,
+            key=lambda s: abs(
+                datetime.fromisoformat(s["acquisition_time"].replace("Z", "+00:00")) - target_dt
+            ),
+        )
+    if request.scene_selection == "closest_to_end_date":
         target_dt = datetime.fromisoformat(f"{request.end_date}T23:59:59+00:00")
-        return min(scenes, key=lambda s: abs(datetime.fromisoformat(s["acquisition_time"].replace("Z", "+00:00")) - target_dt))
-    else:  # "most_recent"
-        return max(scenes, key=lambda s: s["acquisition_time"])
+        return min(
+            matching,
+            key=lambda s: abs(
+                datetime.fromisoformat(s["acquisition_time"].replace("Z", "+00:00")) - target_dt
+            ),
+        )
+    return max(matching, key=lambda s: s["acquisition_time"])
 
 
 # =============================================================================
@@ -307,6 +361,7 @@ def evaluate_sar_geometry_quality(bbox: list[float], acquisition_time: str) -> d
         angle = src.read(2)
         shadow_frac = round(float(np.count_nonzero(shadow > 0) / shadow.size), 4)
         valid_angles = angle[angle > 0]
+        mean_angle = round(float(np.mean(valid_angles)), 2) if len(valid_angles) > 0 else 38.0
     is_angle_degraded = bool(mean_angle < 15.0 or mean_angle > 65.0)
     is_shadow_degraded = bool(shadow_frac > 0.08)
     radar_geometry_poor = bool(is_shadow_degraded or is_angle_degraded)
@@ -408,16 +463,34 @@ def validate_raster(raster_path: Path, polarizations: list[str]) -> dict:
 # =============================================================================
 
 def fetch_sar_imagery(request: SARSatelliteRequest) -> dict:
-    scenes = search_sentinel1_catalog(request, max_results=20)
+    scenes = search_sentinel1_catalog(request, max_results=50)
     best_scene = select_best_sar_scene(scenes, request=request)
 
     if best_scene is None:
+        orbits = sorted({s.get("orbit_direction") or "UNKNOWN" for s in scenes})
+        if scenes and request.orbit_direction != "BOTH":
+            available = " or ".join(orbits) if orbits else "BOTH"
+            detail = (
+                f" {len(scenes)} scene(s) exist for this AOI/date range, but all are "
+                f"{', '.join(orbits)} — none are {request.orbit_direction}. "
+                f"Retry with orbit_direction={available} or BOTH."
+            )
+        elif scenes:
+            detail = (
+                f" Catalog returned {len(scenes)} scene(s) with orbit(s) {orbits}; "
+                f"none matched polarization={request.polarization}."
+            )
+        else:
+            detail = " Catalog returned no Sentinel-1 GRD items for this AOI and date range."
         return {
             "status": "error",
             "error": {
                 "type": "no_suitable_scene",
-                "message": "No suitable Sentinel-1 GRD SAR scene was found for the requested AOI, time range and orbit parameters."
-            }
+                "message": (
+                    "No suitable Sentinel-1 GRD SAR scene was found for the requested "
+                    f"AOI, time range and orbit parameters.{detail}"
+                ),
+            },
         }
 
     raster_path = process_sar_imagery(request, scene=best_scene)
@@ -443,6 +516,7 @@ def fetch_sar_imagery(request: SARSatelliteRequest) -> dict:
         "selection": {
             "strategy": request.scene_selection,
             "orbit_direction": request.orbit_direction,
+            "orbit_used": best_scene.get("orbit_direction"),
         },
         "request": {
             "bbox": request.bbox,

@@ -1,13 +1,26 @@
+"""Runtime configuration for SatQuery.
+
+Provider selection is controlled by SATQUERY_USE_OPENAI / SATQUERY_USE_CLAUDE.
+Exactly one real provider must be enabled when SATQUERY_MOCK_PLANNER=false.
+"""
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load the project-root .env when this module is imported.
+_env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(_env_path)
 
 
 def _as_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in ("1", "true", "t", "yes", "y")
+    return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
 @dataclass(frozen=True)
@@ -28,7 +41,7 @@ class Settings:
     memory_db_url: str | None = None
     memory_embed_model: str = "openai:text-embedding-3-small"
 
-    # LLM selection
+    # LLM provider toggle — preserve Shrishti's existing architecture.
     use_openai: bool = False
     use_claude: bool = False
 
@@ -54,7 +67,6 @@ def load_settings() -> Settings:
         os.getenv("SATQUERY_USE_CLAUDE"), False
     )
 
-    # When using the real planner, exactly one LLM must be enabled.
     if not use_mock_planner and use_openai == use_claude:
         raise ValueError(
             "Exactly one LLM must be enabled. "
@@ -64,41 +76,25 @@ def load_settings() -> Settings:
 
     return Settings(
         use_mock_planner=use_mock_planner,
-
         use_mock_tools=_as_bool(
             os.getenv("SATQUERY_MOCK_TOOLS"), True
         ),
-
         use_openai=use_openai,
         use_claude=use_claude,
-
         openai_model=os.getenv(
-            "SATQUERY_OPENAI_MODEL",
-            "gpt-5.6",
+            "SATQUERY_OPENAI_MODEL", "gpt-5.6"
         ),
-
         claude_model=os.getenv(
-            "SATQUERY_CLAUDE_MODEL",
-            "claude-sonnet-4-6",
+            "SATQUERY_CLAUDE_MODEL", "claude-sonnet-4-6"
         ),
-
-        openai_api_key=os.getenv(
-            "OPENAI_API_KEY"
-        ) or None,
-
-        claude_api_key=os.getenv(
-            "ANTHROPIC_API_KEY"
-        ) or None,
-
+        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        claude_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         memory_backend=os.getenv(
-            "SATQUERY_MEMORY_BACKEND",
-            "none",
+            "SATQUERY_MEMORY_BACKEND", "none"
         ),
-
         memory_db_url=os.getenv(
             "SATQUERY_MEMORY_DB_URL"
         ) or None,
-
         memory_embed_model=os.getenv(
             "SATQUERY_MEMORY_EMBED_MODEL",
             "openai:text-embedding-3-small",

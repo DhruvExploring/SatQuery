@@ -1,14 +1,5 @@
 """
 API Pydantic models — request and response shapes for the HTTP layer.
-
-These models are ONLY for serialising/deserialising HTTP bodies.
-They are NOT used by LangGraph. The graph uses SatQueryState (TypedDict).
-
-Why separate models from state?
-  - SatQueryState is LangGraph's internal clipboard; it carries runtime
-    data (plan, tool_results, errors) that callers should never send.
-  - These models enforce exactly what the API accepts and returns.
-  - If state.py ever changes internals, API contracts stay stable.
 """
 
 from __future__ import annotations
@@ -18,9 +9,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-# ---------------------------------------------------------------------------
-# Request
-# ---------------------------------------------------------------------------
 class QueryRequest(BaseModel):
     """Body for POST /api/v1/query."""
 
@@ -31,73 +19,67 @@ class QueryRequest(BaseModel):
     )
     bbox: list[float] | None = Field(
         default=None,
-        description="[min_lon, min_lat, max_lon, max_lat]. Required for fetch requests.",
+        description="[min_lon, min_lat, max_lon, max_lat]. Required for imagery tools.",
     )
-    start_date: str | None = Field(
+    latitude: float | None = Field(
         default=None,
-        description="Start of date range. YYYY-MM-DD.",
+        ge=-90.0,
+        le=90.0,
+        description="Optional point latitude for weather tool.",
     )
-    end_date: str | None = Field(
+    longitude: float | None = Field(
         default=None,
-        description="End of date range. YYYY-MM-DD.",
+        ge=-180.0,
+        le=180.0,
+        description="Optional point longitude for weather tool.",
     )
-    modality: str = Field(
-        default="optical",
-        description="'optical' or 'multispectral'.",
+    start_date: str | None = Field(default=None, description="YYYY-MM-DD")
+    end_date: str | None = Field(default=None, description="YYYY-MM-DD")
+    bands: list[str] | None = Field(
+        default=None,
+        description="Optional Sentinel-2 bands for multispectral fetches.",
     )
-    max_cloud_cover: float = Field(
-        default=30.0,
-        ge=0.0,
-        le=100.0,
-        description="Maximum cloud cover percentage allowed.",
-    )
+    max_cloud_cover: float = Field(default=30.0, ge=0.0, le=100.0)
     width: int = Field(default=512, ge=1, le=4096)
     height: int = Field(default=512, ge=1, le=4096)
-
-    # Identity — scopes LangMem memories to a specific user.
-    # Optional: omit for anonymous / stateless queries.
-    user_id: str | None = Field(
+    polarization: list[str] | None = Field(
         default=None,
-        description="Optional user identifier for scoped long-term memory.",
+        description="Optional SAR polarizations, e.g. ['VV','VH'].",
     )
+    orbit_direction: str | None = Field(
+        default=None,
+        description="ASCENDING | DESCENDING | BOTH",
+    )
+    scene_selection: str | None = Field(default=None)
 
-    model_config = {"json_schema_extra": {
-        "examples": [{
-            "query": "Fetch Sentinel-2 imagery for Delhi",
-            "bbox": [77.1, 28.5, 77.3, 28.7],
-            "start_date": "2025-01-01",
-            "end_date": "2025-01-31",
-            "user_id": "user-123",
-        }]
-    }}
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "query": "Fetch Sentinel-2 optical imagery for Delhi",
+                    "bbox": [77.1, 28.5, 77.3, 28.7],
+                    "start_date": "2025-01-01",
+                    "end_date": "2025-01-31",
+                }
+            ]
+        }
+    }
 
 
-# ---------------------------------------------------------------------------
-# Response
-# ---------------------------------------------------------------------------
 class QueryResponse(BaseModel):
-    """Body returned by POST /api/v1/query."""
-
-    status: str = Field(description="'success' | 'error' | 'clarify' | 'pending'")
+    status: str = Field(
+        description=(
+            "Semantic outcome: success | ok | clarify | error. "
+            "HTTP codes: 200 success/ok, 400 invalid/missing input, "
+            "404 no matching scene/data, 502 upstream tool failure, 500 internal."
+        )
+    )
     final_answer: str | None = Field(default=None)
-
-    # Optional fields — only present when relevant
-    plan: dict[str, Any] | None = Field(
-        default=None,
-        description="The planner's decision (action, tool, args, reason).",
-    )
-    tool_results: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Raw tool output(s) from the executor.",
-    )
-    errors: list[str] = Field(
-        default_factory=list,
-        description="Validation or execution errors, if any.",
-    )
+    plan: dict[str, Any] | None = Field(default=None)
+    tool_results: list[dict[str, Any]] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    execution_trace: list[dict[str, Any]] = Field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------------
 class HealthResponse(BaseModel):
     status: str = "ok"

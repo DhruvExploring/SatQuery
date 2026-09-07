@@ -1,4 +1,8 @@
-"""Run the Week-1 graph from the command line (no FastAPI yet)."""
+"""Invoke the LangGraph orchestrator from the command line (no HTTP).
+
+Run from the SatQuery root:
+    python -m backend.demo
+"""
 
 from __future__ import annotations
 
