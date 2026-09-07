@@ -19,7 +19,13 @@ import numpy as np
 import rasterio
 import requests
 from pydantic import BaseModel, Field, field_validator, model_validator
-from fastmcp import FastMCP
+try:
+    from fastmcp import FastMCP
+except (ImportError, Exception):
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        FastMCP = None
 
 # Load optional .env if present
 try:
@@ -483,7 +489,13 @@ def fetch_optical_imagery(request: OpticalSatelliteRequest) -> dict:
 # 8. FastMCP Tool Adapter & CLI Entry Point
 # =============================================================================
 
-mcp = FastMCP("Tool 1: Optical Satellite Imagery Server")
+if FastMCP is None:
+    class _DummyMCP:
+        def tool(self, *args, **kwargs):
+            return lambda fn: fn
+    mcp = _DummyMCP()
+else:
+    mcp = FastMCP("Tool 1: Optical Satellite Imagery Server")
 
 @mcp.tool(
     name="fetch_optical_imagery",

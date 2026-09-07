@@ -19,7 +19,13 @@ import numpy as np
 import rasterio
 from rasterio.warp import transform_bounds
 from pydantic import BaseModel, Field, field_validator, model_validator
-from fastmcp import FastMCP
+try:
+    from fastmcp import FastMCP
+except (ImportError, Exception):
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        FastMCP = None
 
 
 # =============================================================================
@@ -280,7 +286,13 @@ def inspect_geotiff_metadata(req: GeoTIFFInspectionRequest) -> dict:
 # 3. FastMCP Tool Registration & CLI Entry Point
 # =============================================================================
 
-mcp = FastMCP("Tool 6: Universal GeoTIFF QA & Metadata Inspector")
+if FastMCP is None:
+    class _DummyMCP:
+        def tool(self, *args, **kwargs):
+            return lambda fn: fn
+    mcp = _DummyMCP()
+else:
+    mcp = FastMCP("Tool 6: Universal GeoTIFF QA & Metadata Inspector")
 
 @mcp.tool(
     name="inspect_geotiff_metadata",

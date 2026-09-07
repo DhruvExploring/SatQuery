@@ -52,6 +52,22 @@ class QueryRequest(BaseModel):
     )
     scene_selection: str | None = Field(default=None)
 
+    # Analytical inputs for Tools 5–8
+    input_file: str | None = Field(default=None, description="Path to input GeoTIFF for Tool 5 or Tool 6.")
+    compare_with: str | None = Field(default=None, description="Second GeoTIFF path to compare grid compatibility in Tool 6.")
+    raster_before_path: str | None = Field(default=None, description="Pre-event GeoTIFF path for Tool 7.")
+    raster_after_path: str | None = Field(default=None, description="Post-event GeoTIFF path for Tool 7.")
+    lulc_raster_path: str | None = Field(default=None, description="LULC GeoTIFF path for Tool 8.")
+    dem_raster_path: str | None = Field(default=None, description="DEM elevation GeoTIFF path for Tool 8.")
+    zone_mask_path: str | None = Field(default=None, description="Zone/change mask GeoTIFF path for Tool 8.")
+    indices: list[str] | None = Field(default=None, description="List of vegetation indices to compute.")
+    band_selection: int | str | None = Field(default=1, description="Band selection for change detection in Tool 7.")
+    threshold_type: str | None = Field(default="absolute", description="Threshold type for change detection.")
+    threshold_value: float | None = Field(default=0.15, description="Threshold value for change detection.")
+    relative_change_threshold_percent: float | None = Field(default=None, description="Relative change threshold percent.")
+    mask_encoding: str | None = Field(default="bipolar_3class", description="Mask encoding format for Tool 7.")
+    analysis_output_dir: str | None = Field(default=None, description="Output directory for generated analysis products.")
+
     model_config = {
         "json_schema_extra": {
             "examples": [

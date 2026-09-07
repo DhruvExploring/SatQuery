@@ -171,4 +171,13 @@ def _llm_plan(state: SatQueryState) -> Plan:
     return enforce_call_tool_location(planned, state)
 
 def make_plan(state: SatQueryState) -> Plan:
-    return _keyword_plan(state) if settings.use_mock_planner else _llm_plan(state)
+    if settings.use_mock_planner:
+        return _keyword_plan(state)
+    try:
+        return _llm_plan(state)
+    except Exception as exc:
+        logger.warning(
+            "LLM planning failed with error: %r. Falling back to keyword planner.",
+            exc,
+        )
+        return _keyword_plan(state)

@@ -21,7 +21,13 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject, transform_bounds
 from scipy import ndimage
 from pydantic import BaseModel, Field, field_validator
-from fastmcp import FastMCP
+try:
+    from fastmcp import FastMCP
+except (ImportError, Exception):
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        FastMCP = None
 
 
 # =============================================================================
@@ -560,7 +566,13 @@ def analyze_spatial_landcover_terrain(req: SpatialLandcoverTerrainRequest) -> Di
 # 6. FastMCP Tool Registration & CLI Adapter
 # =============================================================================
 
-mcp = FastMCP("Tool 8: Spatial Landcover & Terrain Analysis Server")
+if FastMCP is None:
+    class _DummyMCP:
+        def tool(self, *args, **kwargs):
+            return lambda fn: fn
+    mcp = _DummyMCP()
+else:
+    mcp = FastMCP("Tool 8: Spatial Landcover & Terrain Analysis Server")
 
 @mcp.tool(
     name="analyze_spatial_landcover_terrain",

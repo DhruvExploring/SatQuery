@@ -18,7 +18,13 @@ from typing import Literal, Optional, List, Dict, Any, Tuple
 import numpy as np
 import rasterio
 from pydantic import BaseModel, Field, field_validator, model_validator
-from fastmcp import FastMCP
+try:
+    from fastmcp import FastMCP
+except (ImportError, Exception):
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        FastMCP = None
 
 
 # =============================================================================
@@ -345,7 +351,13 @@ def compute_vegetation_indices(req: VegetationIndicesRequest) -> dict:
 # 5. FastMCP Tool Registration & CLI Entry Point
 # =============================================================================
 
-mcp = FastMCP("Tool 5: Vegetation & Spectral Indices Server")
+if FastMCP is None:
+    class _DummyMCP:
+        def tool(self, *args, **kwargs):
+            return lambda fn: fn
+    mcp = _DummyMCP()
+else:
+    mcp = FastMCP("Tool 5: Vegetation & Spectral Indices Server")
 
 @mcp.tool(
     name="compute_vegetation_indices",

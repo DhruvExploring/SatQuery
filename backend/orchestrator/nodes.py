@@ -119,7 +119,17 @@ def execute(state: SatQueryState) -> dict[str, Any]:
 
     if result.get("status") == "success":
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
-        if tool_name == "compute_vegetation_indices":
+        if tool_name in (
+            "fetch_satellite_imagery",
+            "fetch_optical_imagery",
+            "fetch_multispectral_imagery",
+            "fetch_sar",
+            "fetch_sar_imagery",
+        ):
+            path = data.get("file_path") or result.get("file_path")
+            if path:
+                update["input_file"] = path
+        elif tool_name == "compute_vegetation_indices":
             path = data.get("file_path") or result.get("file_path")
             if path:
                 update["input_file"] = path

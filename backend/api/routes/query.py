@@ -55,6 +55,20 @@ def run_query(body: QueryRequest) -> JSONResponse:
         polarization=body.polarization,
         orbit_direction=body.orbit_direction,
         scene_selection=body.scene_selection,
+        input_file=body.input_file,
+        compare_with=body.compare_with,
+        raster_before_path=body.raster_before_path,
+        raster_after_path=body.raster_after_path,
+        lulc_raster_path=body.lulc_raster_path,
+        dem_raster_path=body.dem_raster_path,
+        zone_mask_path=body.zone_mask_path,
+        indices=body.indices,
+        band_selection=body.band_selection,
+        threshold_type=body.threshold_type,
+        threshold_value=body.threshold_value,
+        relative_change_threshold_percent=body.relative_change_threshold_percent,
+        mask_encoding=body.mask_encoding,
+        analysis_output_dir=body.analysis_output_dir,
     )
 
     try:

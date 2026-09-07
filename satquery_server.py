@@ -9,7 +9,13 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Union, Any
 
-from fastmcp import FastMCP
+try:
+    from fastmcp import FastMCP
+except (ImportError, Exception):
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        FastMCP = None
 
 # Add root directory to sys.path to ensure module imports succeed in any environment
 ROOT_DIR = Path(__file__).resolve().parent
@@ -50,8 +56,15 @@ from Tool_8_analyze_spatial_landcover_terrain.analyze_spatial_landcover_terrain 
     analyze_spatial_landcover_terrain,
 )
 
-# Initialize Master FastMCP Server
-mcp = FastMCP("SatQuery Earth Observation Intelligence System")
+if FastMCP is None:
+    class _DummyMCP:
+        def tool(self, *args, **kwargs):
+            return lambda fn: fn
+        async def list_tools(self):
+            return []
+    mcp = _DummyMCP()
+else:
+    mcp = FastMCP("SatQuery Earth Observation Intelligence System")
 
 
 # =============================================================================
