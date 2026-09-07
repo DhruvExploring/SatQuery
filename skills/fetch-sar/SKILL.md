@@ -41,4 +41,5 @@ a "not implemented" error, which is handled gracefully by the orchestrator.
 
 ## Tool name for executor
 
-When deciding to use this skill, set `tool` = `fetch_sar` in the Plan.
+When deciding to use this skill, set `tool` = `fetch_sar_imagery` in the Plan.
+Never invent names such as SentinelHub_Search.

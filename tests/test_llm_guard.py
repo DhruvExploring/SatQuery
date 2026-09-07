@@ -1,6 +1,91 @@
-from backend.orchestrator.llm import _llm_plan
+from backend.orchestrator.llm import _llm_plan, resolve_llm_tool
 from backend.orchestrator.registry import reconcile_sar_args
 from backend.orchestrator.state import empty_state
+
+
+def _fake_client(tool: str, reason: str = "ok"):
+    class _FakeClient:
+        def invoke(self, _messages):
+            return {
+                "action": "call_tool",
+                "tool": tool,
+                "args": {},
+                "reason": reason,
+            }
+
+    return _FakeClient()
+
+
+def test_resolve_llm_tool_maps_aliases_and_rejects_invented_names():
+    assert resolve_llm_tool("fetch_multispectral_imagery") == "fetch_multispectral_imagery"
+    assert resolve_llm_tool("fetch_sar") == "fetch_sar_imagery"
+    assert resolve_llm_tool("fetch_satellite_imagery") == "fetch_optical_imagery"
+    assert resolve_llm_tool("Sentinelimagery") is None
+    assert resolve_llm_tool("SentinelHub_Search") is None
+
+
+def test_llm_plan_falls_back_when_model_invents_sentinelimagery(monkeypatch):
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client("Sentinelimagery"),
+    )
+    plan = _llm_plan(
+        empty_state(
+            query="Fetch Sentinel-2 multispectral imagery for Delhi for vegetation analysis",
+            bbox=[77.1, 28.5, 77.3, 28.7],
+            start_date="2025-01-01",
+            end_date="2025-01-31",
+        )
+    )
+    assert plan["action"] == "call_tool"
+    assert plan["tool"] == "fetch_multispectral_imagery"
+    assert "keyword fallback" in plan["reason"]
+
+
+def test_llm_plan_falls_back_when_model_invents_sentinelhub_search(monkeypatch):
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client("SentinelHub_Search"),
+    )
+    plan = _llm_plan(
+        empty_state(
+            query="Fetch SAR radar Sentinel-1 imagery for Delhi",
+            bbox=[77.1, 28.5, 77.3, 28.7],
+            start_date="2025-01-01",
+            end_date="2025-01-31",
+        )
+    )
+    assert plan["action"] == "call_tool"
+    assert plan["tool"] == "fetch_sar_imagery"
+    assert "keyword fallback" in plan["reason"]
+
+
+def test_llm_plan_maps_fetch_sar_alias(monkeypatch):
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client("fetch_sar", "SAR skill name"),
+    )
+    plan = _llm_plan(
+        empty_state(
+            query="Fetch SAR radar Sentinel-1 imagery for Delhi",
+            bbox=[77.1, 28.5, 77.3, 28.7],
+            start_date="2025-01-01",
+            end_date="2025-01-31",
+        )
+    )
+    assert plan["action"] == "call_tool"
+    assert plan["tool"] == "fetch_sar_imagery"
+    assert plan["reason"] == "SAR skill name"
+
+
+def test_llm_plan_unknown_tool_without_keywords_becomes_chat(monkeypatch):
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client("SentinelHub_Search"),
+    )
+    plan = _llm_plan(empty_state(query="hello, what can you do?"))
+    assert plan["action"] == "chat"
+    assert plan["tool"] is None
 
 
 def test_llm_plan_discards_hallucinated_bbox(monkeypatch):

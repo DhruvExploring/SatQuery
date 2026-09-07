@@ -18,6 +18,7 @@ def test_every_tool_spec_has_required_fields():
         "keywords",
         "args_builder",
         "response_formatter",
+        "location",
     }
     assert PLANNER_PRIORITY == (
         "fetch_sar_imagery",
@@ -28,8 +29,9 @@ def test_every_tool_spec_has_required_fields():
     for name, spec in TOOL_SPEC.items():
         assert set(spec) >= required
         assert spec["name"] == name
-        assert spec["keywords"]
+        assert spec["description"]
         assert spec["requires"]
+        assert spec["location"]
 
 
 def test_respond_error_uses_plan_reason_when_errors_empty():

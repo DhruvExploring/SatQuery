@@ -164,6 +164,87 @@ def test_query_upstream_tool_failure_returns_502(monkeypatch):
     assert "failed" in body["final_answer"].lower()
 
 
+def test_query_ndvi_without_file_returns_400_clarify():
+    resp = client.post(
+        "/api/v1/query",
+        json={"query": "Compute NDVI vegetation indices from this GeoTIFF"},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["status"] == "clarify"
+    assert body["tool_results"] == []
+
+
+def test_query_tool5_indices_succeeds():
+    resp = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Compute NDVI vegetation indices from this GeoTIFF",
+            "input_file": "dummy_multispectral.tif",
+            "indices": ["NDVI", "NBR"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["plan"]["tool"] == "compute_vegetation_indices"
+    assert body["plan"]["args"]["file_path"] == "dummy_multispectral.tif"
+    assert body["plan"]["args"]["indices"] == ["NDVI", "NBR"]
+
+
+def test_query_tool6_inspect_succeeds():
+    resp = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Inspect this GeoTIFF and run raster QA",
+            "input_file": "dummy_t1.tif",
+            "compare_with": "dummy_t2.tif",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["plan"]["tool"] == "inspect_geotiff_metadata"
+    assert body["plan"]["args"]["file_path"] == "dummy_t1.tif"
+    assert body["plan"]["args"]["compare_with"] == "dummy_t2.tif"
+
+
+def test_query_tool7_temporal_change_succeeds():
+    resp = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Analyze temporal change between these two rasters",
+            "raster_before_path": "dummy_before.tif",
+            "raster_after_path": "dummy_after.tif",
+            "band_selection": "NDVI",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["plan"]["tool"] == "analyze_temporal_change"
+    assert body["plan"]["args"]["raster_before_path"] == "dummy_before.tif"
+    assert body["plan"]["args"]["raster_after_path"] == "dummy_after.tif"
+    assert body["plan"]["args"]["band_selection"] == "NDVI"
+
+
+def test_query_tool8_landcover_succeeds():
+    resp = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Analyze land cover and terrain for this WorldCover raster",
+            "lulc_raster_path": "dummy_lulc.tif",
+            "dem_raster_path": "dummy_dem.tif",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["plan"]["tool"] == "analyze_spatial_landcover_terrain"
+    assert body["plan"]["args"]["lulc_raster_path"] == "dummy_lulc.tif"
+    assert body["plan"]["args"]["dem_raster_path"] == "dummy_dem.tif"
+
+
 def test_query_import_error_returns_500(monkeypatch):
     def _fail(_name, _args):
         return {

@@ -48,6 +48,7 @@ class Settings:
     # LLM models
     openai_model: str = "gpt-5.6"
     claude_model: str = "claude-sonnet-4-6"
+    openai_base_url: str | None = None
 
     # API keys
     openai_api_key: str | None = None
@@ -67,11 +68,20 @@ def load_settings() -> Settings:
         os.getenv("SATQUERY_USE_CLAUDE"), False
     )
 
+    # Older .env files used SATQUERY_LLM_PROVIDER instead of USE_OPENAI / USE_CLAUDE.
+    provider = (os.getenv("SATQUERY_LLM_PROVIDER") or "").strip().lower()
+    if not use_openai and not use_claude:
+        if provider in {"openai", "groq"}:
+            use_openai = True
+        elif provider in {"claude", "anthropic"}:
+            use_claude = True
+
     if not use_mock_planner and use_openai == use_claude:
         raise ValueError(
             "Exactly one LLM must be enabled. "
             "Set SATQUERY_USE_OPENAI=true OR "
-            "SATQUERY_USE_CLAUDE=true, but not both."
+            "SATQUERY_USE_CLAUDE=true, but not both. "
+            "Or set SATQUERY_MOCK_PLANNER=true for the keyword planner."
         )
 
     return Settings(
@@ -81,13 +91,20 @@ def load_settings() -> Settings:
         ),
         use_openai=use_openai,
         use_claude=use_claude,
-        openai_model=os.getenv(
-            "SATQUERY_OPENAI_MODEL", "gpt-5.6"
-        ),
+        openai_model=os.getenv("SATQUERY_OPENAI_MODEL")
+        or os.getenv("SATQUERY_LLM_MODEL")
+        or "gpt-5.6",
         claude_model=os.getenv(
             "SATQUERY_CLAUDE_MODEL", "claude-sonnet-4-6"
         ),
-        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_base_url=os.getenv("SATQUERY_LLM_BASE_URL")
+        or os.getenv("OPENAI_BASE_URL")
+        or None,
+        openai_api_key=(
+            os.getenv("OPENAI_API_KEY")
+            or os.getenv("SATQUERY_LLM_API_KEY")
+            or None
+        ),
         claude_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         memory_backend=os.getenv(
             "SATQUERY_MEMORY_BACKEND", "none"

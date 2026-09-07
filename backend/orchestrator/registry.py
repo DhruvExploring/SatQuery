@@ -1,7 +1,7 @@
 """Single source of truth for SatQuery tools, routing and trusted arguments."""
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from backend.config.settings import settings
 from backend.orchestrator.state import Plan, SatQueryState
@@ -15,6 +15,9 @@ TOOL_INDICES = "compute_vegetation_indices"
 TOOL_INSPECT = "inspect_geotiff_metadata"
 TOOL_TEMPORAL = "analyze_temporal_change"
 TOOL_SPATIAL = "analyze_spatial_landcover_terrain"
+TOOL_WILDFIRE = "workflow_wildfire_burn_severity"
+TOOL_FLOOD = "workflow_flood_inundation_impact"
+TOOL_DROUGHT = "workflow_agricultural_drought_canopy_stress"
 
 PLANNER_PRIORITY = (
     TOOL_SAR,
@@ -23,13 +26,28 @@ PLANNER_PRIORITY = (
     TOOL_OPTICAL,
 )
 
+# Bands required by Tool 5's default 10-index set (NDVI…NBR, including NDRE/NDMI).
+ANALYTICAL_S2_BANDS = ["B02", "B03", "B04", "B05", "B07", "B08", "B11", "B12"]
+DEFAULT_VEGETATION_INDICES = [
+    "NDVI",
+    "EVI",
+    "SAVI",
+    "GNDVI",
+    "NDRE_B5",
+    "NDRE_B7",
+    "NDMI",
+    "NDWI",
+    "MSAVI",
+    "NBR",
+]
+
 
 def reconcile_sar_args(args: dict[str, Any], state: SatQueryState) -> dict[str, Any]:
     """Reconcile SAR parameters between user state, query text, and planner args."""
     reconciled = dict(args)
     query_text = (state.get("query") or "").lower()
 
-    # Orbit direction: state overrides > query keywords > default BOTH (ignore hallucinated LLM values)
+    # Orbit: HTTP state > query keywords > BOTH (ignore hallucinated LLM values)
     if state.get("orbit_direction"):
         reconciled["orbit_direction"] = state["orbit_direction"]
     elif "ascending" in query_text:
@@ -39,10 +57,10 @@ def reconcile_sar_args(args: dict[str, Any], state: SatQueryState) -> dict[str, 
     else:
         reconciled["orbit_direction"] = "BOTH"
 
-    # Polarization: state overrides > caller args > default ["VV", "VH"]
+    # Polarization: HTTP state > caller args > ["VV", "VH"]
     if state.get("polarization"):
         reconciled["polarization"] = state["polarization"]
-    elif "polarization" in reconciled and reconciled["polarization"]:
+    elif reconciled.get("polarization"):
         pass
     else:
         reconciled["polarization"] = ["VV", "VH"]
@@ -103,7 +121,7 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
             "start_date": state.get("start_date") or settings.default_start_date,
             "end_date": state.get("end_date") or settings.default_end_date,
             "modality": "multispectral",
-            "bands": state.get("bands"),
+            "bands": state.get("bands") or ANALYTICAL_S2_BANDS,
             "max_cloud_cover": state.get("max_cloud_cover", settings.default_max_cloud_cover),
             "width": state.get("width", settings.default_width),
             "height": state.get("height", settings.default_height),
@@ -133,9 +151,10 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
     if tool == TOOL_INDICES:
         return {
             "file_path": state.get("input_file") or _last_raster_path(state),
-            "indices": state.get("indices") or ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE_B5", "NDRE_B7", "NDMI", "NDWI", "MSAVI", "NBR"],
+            "indices": state.get("indices") or DEFAULT_VEGETATION_INDICES,
             "band_mapping": state.get("band_mapping"),
             "calculate_heuristic_classification": state.get("calculate_heuristic_classification", True),
+            "output_dir": state.get("analysis_output_dir"),
         }
     if tool == TOOL_INSPECT:
         return {
@@ -168,6 +187,44 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
             "calculate_fragmentation": state.get("calculate_fragmentation", True),
             "output_dir": state.get("analysis_output_dir"),
         }
+    if tool == TOOL_WILDFIRE:
+        return {
+            "pre_raster_path": state.get("raster_before_path"),
+            "post_raster_path": state.get("raster_after_path"),
+            "lulc_raster_path": state.get("lulc_raster_path"),
+            "dem_raster_path": state.get("dem_raster_path"),
+            "output_dir": state.get("analysis_output_dir"),
+        }
+    if tool == TOOL_FLOOD:
+        return {
+            "sar_pre_raster_path": state.get("raster_before_path"),
+            "sar_post_raster_path": state.get("raster_after_path"),
+            "lulc_raster_path": state.get("lulc_raster_path"),
+            "dem_raster_path": state.get("dem_raster_path"),
+            "output_dir": state.get("analysis_output_dir"),
+            "bbox": state.get("bbox"),
+            "latitude": state.get("latitude"),
+            "longitude": state.get("longitude"),
+            "start_date": state.get("start_date") or settings.default_start_date,
+            "end_date": state.get("end_date") or settings.default_end_date,
+            "include_weather": bool(
+                state.get("bbox")
+                or (
+                    state.get("latitude") is not None
+                    and state.get("longitude") is not None
+                )
+            ),
+        }
+    if tool == TOOL_DROUGHT:
+        return {
+            "multispectral_raster_path": state.get("input_file") or _last_raster_path(state),
+            "output_dir": state.get("analysis_output_dir"),
+            "bbox": state.get("bbox"),
+            "latitude": state.get("latitude"),
+            "longitude": state.get("longitude"),
+            "start_date": state.get("start_date") or settings.default_start_date,
+            "end_date": state.get("end_date") or settings.default_end_date,
+        }
     raise ValueError(f"Unknown tool: {tool}")
 
 
@@ -196,6 +253,12 @@ def format_tool_success(tool: str, result: dict[str, Any]) -> str:
     if tool == TOOL_SPATIAL:
         dom = result.get("dominant_landcover", {})
         return f"Spatial land-cover/terrain analysis complete. Dominant land cover: {dom.get('name')} ({dom.get('percentage')}% of valid AOI)."
+    if str(tool).startswith("workflow_"):
+        pipeline = result.get("pipeline") or tool
+        summary = result.get("executive_summary") or {}
+        if summary:
+            return f"{pipeline} completed successfully. Summary: {summary}"
+        return f"{pipeline} completed successfully."
     return f"{tool} completed successfully."
 
 
@@ -272,7 +335,33 @@ TOOL_SPEC: dict[str, dict[str, Any]] = {
         "args_builder": lambda state: trusted_args_for_tool(TOOL_SPATIAL, state),
         "response_formatter": lambda result: format_tool_success(TOOL_SPATIAL, result),
     },
-    # Aliases
+    TOOL_WILDFIRE: {
+        "name": TOOL_WILDFIRE,
+        "description": "Pipeline A: NBR burn severity, slope risk and forest loss.",
+        "requires": ["raster_before_path", "raster_after_path", "lulc_raster_path"],
+        "keywords": (),
+        "location": "mission_pair_lulc",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_WILDFIRE, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_WILDFIRE, result),
+    },
+    TOOL_FLOOD: {
+        "name": TOOL_FLOOD,
+        "description": "Pipeline B: SAR flood inundation and LULC impact.",
+        "requires": ["raster_before_path", "raster_after_path", "lulc_raster_path"],
+        "keywords": (),
+        "location": "mission_pair_lulc",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_FLOOD, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_FLOOD, result),
+    },
+    TOOL_DROUGHT: {
+        "name": TOOL_DROUGHT,
+        "description": "Pipeline C: agricultural drought and canopy stress.",
+        "requires": ["input_file"],
+        "keywords": (),
+        "location": "mission_drought",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_DROUGHT, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_DROUGHT, result),
+    },
     "fetch_satellite_imagery": {
         "name": "fetch_satellite_imagery",
         "description": "Fetch Sentinel-2 optical imagery for a bbox and date range.",
@@ -293,7 +382,13 @@ TOOL_SPEC: dict[str, dict[str, Any]] = {
     },
 }
 
-TOOL_REGISTRY = {name: spec["description"] for name, spec in TOOL_SPEC.items() if not name.startswith("fetch_satellite_") and name != "fetch_sar"}
+# LLM prompt lists canonical tools only (no aliases, no mission workflows).
+TOOL_REGISTRY = {
+    name: spec["description"]
+    for name, spec in TOOL_SPEC.items()
+    if name not in {"fetch_satellite_imagery", "fetch_sar"}
+    and not name.startswith("workflow_")
+}
 
 _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     (TOOL_SPATIAL, ("land cover", "landcover", "lulc", "worldcover", "terrain", "slope", "elevation", "fragmentation", "patch")),
@@ -328,7 +423,29 @@ def location_ready_for_tool(tool: str, state: SatQueryState) -> bool:
     if loc == "lulc":
         return bool(state.get("lulc_raster_path"))
     if loc == "weather":
-        return bool(state.get("bbox") or (state.get("latitude") is not None and state.get("longitude") is not None))
+        return bool(
+            state.get("bbox")
+            or (
+                state.get("latitude") is not None
+                and state.get("longitude") is not None
+            )
+        )
+    if loc == "mission_pair_lulc":
+        return bool(
+            state.get("raster_before_path")
+            and state.get("raster_after_path")
+            and state.get("lulc_raster_path")
+        )
+    if loc == "mission_drought":
+        has_file = bool(state.get("input_file") or _last_raster_path(state))
+        has_weather = bool(
+            state.get("bbox")
+            or (
+                state.get("latitude") is not None
+                and state.get("longitude") is not None
+            )
+        )
+        return has_file and has_weather
     return bool(state.get("bbox"))
 
 
@@ -352,5 +469,10 @@ def _missing_input_reason(tool: str) -> str:
         "file": f"{tool} requires a GeoTIFF input file.",
         "files": f"{tool} requires raster_before_path and raster_after_path.",
         "lulc": f"{tool} requires lulc_raster_path.",
+        "mission_pair_lulc": (
+            f"{tool} requires raster_before_path, raster_after_path, and lulc_raster_path."
+        ),
+        "mission_drought": (
+            f"{tool} requires a multispectral GeoTIFF and bbox or latitude/longitude."
+        ),
     }.get(loc, f"{tool} is missing required input.")
-

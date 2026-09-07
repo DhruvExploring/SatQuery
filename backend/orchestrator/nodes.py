@@ -6,12 +6,9 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from backend.orchestrator.llm import make_plan
-from backend.orchestrator.registry import (
-    format_tool_success,
-    location_ready_for_tool,
-    trusted_args_for_tool,
-)
+from backend.orchestrator.handshake import apply_advance, build_plan_update
+from backend.orchestrator import llm as llm_module
+from backend.orchestrator.registry import format_tool_success
 from backend.orchestrator.state import SatQueryState, trace_entry
 from backend.tools.executor import execute_tool
 
@@ -84,37 +81,56 @@ def validate_input(state: SatQueryState) -> dict[str, Any]:
 
 
 def plan(state: SatQueryState) -> dict[str, Any]:
-    planned = make_plan(state)
-
+    update = build_plan_update(state, llm_module.plan_single_tool)
+    planned = update.get("plan") or {}
     action = planned.get("action")
     tool = planned.get("tool")
-    summary = f"action={action}" + (
-        f" tool={tool}" if tool else ""
-    )
-
-    return {
-        "plan": planned,
-        "execution_trace": [trace_entry("plan", summary)],
-    }
+    summary = f"action={action}" + (f" tool={tool}" if tool else "")
+    update["execution_trace"] = [trace_entry("plan", summary)]
+    return update
 
 
 def execute(state: SatQueryState) -> dict[str, Any]:
     planned = state.get("plan")
     if not planned or planned.get("action") != "call_tool" or not planned.get("tool"):
-        return {"errors": ["execute node ran without a call_tool plan."], "execution_trace": [trace_entry("execute", "skipped: no call_tool plan")]}
+        return {
+            "errors": ["execute node ran without a call_tool plan."],
+            "handshake_complete": True,
+            "execution_trace": [trace_entry("execute", "skipped: no call_tool plan")],
+        }
 
     tool_name = planned["tool"]
-    if not location_ready_for_tool(tool_name, state):
-        return {"errors": [f"{tool_name} is missing a required input."], "execution_trace": [trace_entry("execute", f"blocked {tool_name}: missing input")]}
+    args = dict(planned.get("args") or {})
+    if not args:
+        from backend.orchestrator.registry import (
+            location_ready_for_tool,
+            trusted_args_for_tool,
+        )
 
-    args = trusted_args_for_tool(tool_name, state)
+        if not location_ready_for_tool(tool_name, state):
+            return {
+                "errors": [f"{tool_name} is missing a required input."],
+                "handshake_complete": True,
+                "execution_trace": [
+                    trace_entry("execute", f"blocked {tool_name}: missing input")
+                ],
+            }
+        args = trusted_args_for_tool(tool_name, state)
+
     started = time.perf_counter()
     result = execute_tool(tool_name, args)
     duration_ms = (time.perf_counter() - started) * 1000.0
 
     update: dict[str, Any] = {
-        "tool_results": [{"tool": tool_name, "result": result, "duration_ms": duration_ms, "timestamp": datetime.now(timezone.utc).isoformat()}],
-        "execution_trace": [trace_entry("execute", f"{tool_name} status={result.get('status', 'unknown')}" )],
+        "tool_results": [{
+            "tool": tool_name,
+            "result": result,
+            "duration_ms": duration_ms,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }],
+        "execution_trace": [
+            trace_entry("execute", f"{tool_name} status={result.get('status', 'unknown')}")
+        ],
     }
 
     if result.get("status") == "success":
@@ -142,6 +158,17 @@ def execute(state: SatQueryState) -> dict[str, Any]:
             if products.get("change_mask_path"):
                 update["last_change_mask_path"] = products["change_mask_path"]
 
+    return update
+
+
+def advance(state: SatQueryState) -> dict[str, Any]:
+    update = apply_advance(state)
+    hops = update.get("handshake_hops")
+    complete = update.get("handshake_complete")
+    summary = f"hops={hops} complete={complete}"
+    if update.get("errors"):
+        summary += " gated"
+    update["execution_trace"] = [trace_entry("advance", summary)]
     return update
 
 def respond(state: SatQueryState) -> dict[str, Any]:
@@ -181,15 +208,22 @@ def respond(state: SatQueryState) -> dict[str, Any]:
         }
 
     if action == "clarify":
+        reason = (planned.get("reason") or "").strip()
+        guide = (
+            "I can fetch optical, multispectral, or SAR imagery, "
+            "weather, vegetation indices, GeoTIFF inspection, temporal change, "
+            "or land-cover/terrain analysis. Provide the required input: "
+            "bbox [min_lon, min_lat, max_lon, max_lat] "
+            "(Delhi: [77.10, 28.50, 77.30, 28.70]), "
+            "latitude and longitude for weather, "
+            "input_file for indices/inspection, "
+            "raster_before_path and raster_after_path for change detection, "
+            "post_start_date and post_end_date for a T2 fetch window, "
+            "or lulc_raster_path for land cover."
+        )
         return {
             "status": "clarify",
-            "final_answer": (
-                "I can fetch optical, multispectral, or SAR imagery, "
-                "or weather context, or run raster analysis. I need the required input. Provide "
-                "bbox [min_lon, min_lat, max_lon, max_lat] "
-                "(Delhi: [77.10, 28.50, 77.30, 28.70]), "
-                "or for weather latitude and longitude."
-            ),
+            "final_answer": f"{reason} {guide}".strip() if reason else guide,
             "execution_trace": [
                 trace_entry("respond", "clarify")
             ],
@@ -243,9 +277,12 @@ def respond(state: SatQueryState) -> dict[str, Any]:
             ],
         }
 
+    prefix = ""
+    if len(results) > 1:
+        prefix = f"Completed {len(results)}-step handshake. "
     return {
         "status": "success",
-        "final_answer": format_tool_success(
+        "final_answer": prefix + format_tool_success(
             tool_name,
             latest,
         ),

@@ -7,11 +7,13 @@ import logging
 from langgraph.graph import END, START, StateGraph
 
 from backend.config.settings import settings
-from backend.orchestrator.nodes import execute, plan, respond, validate_input
-from backend.orchestrator.router import route_after_plan
+from backend.orchestrator.nodes import advance, execute, plan, respond, validate_input
+from backend.orchestrator.router import route_after_advance, route_after_plan
 from backend.orchestrator.state import SatQueryState
 
 logger = logging.getLogger(__name__)
+
+GRAPH_INVOKE_CONFIG = {"recursion_limit": 50}
 
 
 def _build_store() -> object | None:
@@ -99,6 +101,7 @@ def build_graph():
     graph.add_node("validate", validate_input)
     graph.add_node("plan", plan)
     graph.add_node("execute", execute)
+    graph.add_node("advance", advance)
     graph.add_node("respond", respond)
 
     graph.add_edge(START, "validate")
@@ -111,7 +114,15 @@ def build_graph():
             "respond": "respond",
         },
     )
-    graph.add_edge("execute", "respond")
+    graph.add_edge("execute", "advance")
+    graph.add_conditional_edges(
+        "advance",
+        route_after_advance,
+        {
+            "continue": "plan",
+            "respond": "respond",
+        },
+    )
     graph.add_edge("respond", END)
 
     store = _build_store()
@@ -124,6 +135,11 @@ def build_graph():
         compile_kwargs["store"] = store
 
     return graph.compile(**compile_kwargs)
+
+
+def invoke_satquery(state: SatQueryState, graph=None):
+    compiled = graph if graph is not None else satquery_graph
+    return compiled.invoke(state, GRAPH_INVOKE_CONFIG)
 
 
 satquery_graph = build_graph()

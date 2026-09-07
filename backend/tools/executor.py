@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.config.settings import settings
+from backend.orchestrator.registry import ANALYTICAL_S2_BANDS
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,31 @@ def _wrap_tool_error(exc: Exception) -> dict[str, Any]:
             "message": str(exc),
         },
     }
+
+
+def _first_present(args: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in args and args[key] is not None:
+            return args[key]
+    return None
+
+
+def _optional_fields(
+    args: dict[str, Any],
+    mapping: dict[str, str | tuple[str, ...]],
+) -> dict[str, Any]:
+    """Pass through caller-supplied values only.
+
+    Missing keys are omitted so each tool's Pydantic model keeps its own defaults
+    (e.g. VegetationIndicesRequest.calculate_heuristic_classification=True).
+    """
+    out: dict[str, Any] = {}
+    for dest, sources in mapping.items():
+        keys = sources if isinstance(sources, tuple) else (sources,)
+        value = _first_present(args, *keys)
+        if value is not None:
+            out[dest] = value
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -98,7 +124,7 @@ def _run_multispectral(args: dict[str, Any]) -> dict[str, Any]:
             bbox=args.get("bbox") or [],
             start_date=args.get("start_date") or settings.default_start_date,
             end_date=args.get("end_date") or settings.default_end_date,
-            bands=args.get("bands") or ["B02", "B03", "B04", "B08"],
+            bands=args.get("bands") or ANALYTICAL_S2_BANDS,
             max_cloud_cover=float(
                 args.get("max_cloud_cover")
                 or settings.default_max_cloud_cover
@@ -182,13 +208,17 @@ def _run_vegetation_indices(args: dict[str, Any]) -> dict[str, Any]:
 
         req = VegetationIndicesRequest(
             file_path=args.get("input_file") or args.get("file_path"),
-            indices=args.get("indices") or ["NDVI"],
-            band_mapping=args.get("band_mapping"),
-            calculate_heuristic_classification=bool(
-                args.get("calculate_heuristic_classification", False)
+            **_optional_fields(
+                args,
+                {
+                    "indices": "indices",
+                    "band_mapping": "band_mapping",
+                    "calculate_heuristic_classification": (
+                        "calculate_heuristic_classification"
+                    ),
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                },
             ),
-            output_dir=args.get("analysis_output_dir")
-            or args.get("output_dir"),
         )
 
         return compute_vegetation_indices(req)
@@ -210,12 +240,13 @@ def _run_geotiff_inspection(args: dict[str, Any]) -> dict[str, Any]:
 
         req = GeoTIFFInspectionRequest(
             file_path=args.get("input_file") or args.get("file_path"),
-            compare_with=args.get("compare_with"),
-            calculate_statistics=bool(
-                args.get("calculate_statistics", False)
-            ),
-            calculate_histogram=bool(
-                args.get("calculate_histogram", False)
+            **_optional_fields(
+                args,
+                {
+                    "compare_with": "compare_with",
+                    "calculate_statistics": "calculate_statistics",
+                    "calculate_histogram": "calculate_histogram",
+                },
             ),
         )
 
@@ -239,20 +270,20 @@ def _run_temporal_change(args: dict[str, Any]) -> dict[str, Any]:
         req = TemporalChangeRequest(
             raster_before_path=args.get("raster_before_path"),
             raster_after_path=args.get("raster_after_path"),
-            band_selection=args.get("band_selection"),
-            threshold_type=args.get("threshold_type"),
-            threshold_value=args.get("threshold_value"),
-            relative_change_threshold_percent=args.get(
-                "relative_change_threshold_percent"
-            ),
-            mask_encoding=args.get("mask_encoding"),
-            output_dir=args.get("analysis_output_dir")
-            or args.get("output_dir"),
-            generate_difference_raster=bool(
-                args.get("generate_difference_raster", True)
-            ),
-            generate_change_mask=bool(
-                args.get("generate_change_mask", True)
+            **_optional_fields(
+                args,
+                {
+                    "band_selection": "band_selection",
+                    "threshold_type": "threshold_type",
+                    "threshold_value": "threshold_value",
+                    "relative_change_threshold_percent": (
+                        "relative_change_threshold_percent"
+                    ),
+                    "mask_encoding": "mask_encoding",
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                    "generate_difference_raster": "generate_difference_raster",
+                    "generate_change_mask": "generate_change_mask",
+                },
             ),
         )
 
@@ -275,20 +306,96 @@ def _run_spatial_landcover_terrain(args: dict[str, Any]) -> dict[str, Any]:
 
         req = SpatialLandcoverTerrainRequest(
             lulc_raster_path=args.get("lulc_raster_path"),
-            dem_raster_path=args.get("dem_raster_path"),
-            zone_mask_path=args.get("zone_mask_path")
-            or args.get("last_change_mask_path"),
-            calculate_fragmentation=bool(
-                args.get("calculate_fragmentation", False)
+            **_optional_fields(
+                args,
+                {
+                    "dem_raster_path": "dem_raster_path",
+                    "zone_mask_path": (
+                        "zone_mask_path",
+                        "last_change_mask_path",
+                    ),
+                    "calculate_fragmentation": "calculate_fragmentation",
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                    "class_legend": "class_legend",
+                    "zone_legend": "zone_legend",
+                },
             ),
-            output_dir=args.get("analysis_output_dir")
-            or args.get("output_dir"),
-            class_legend=args.get("class_legend"),
-            zone_legend=args.get("zone_legend"),
         )
 
         return analyze_spatial_landcover_terrain(req)
 
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _weather_request_from_args(args: dict[str, Any]):
+    from Tool_4_fetch_weather_environment.fetch_weather_environment import (
+        WeatherEnvironmentRequest,
+    )
+
+    has_location = args.get("bbox") or (
+        args.get("latitude") is not None and args.get("longitude") is not None
+    )
+    if not has_location:
+        return None
+    return WeatherEnvironmentRequest(
+        bbox=args.get("bbox"),
+        latitude=args.get("latitude"),
+        longitude=args.get("longitude"),
+        start_date=args.get("start_date") or settings.default_start_date,
+        end_date=args.get("end_date") or settings.default_end_date,
+        rolling_windows=args.get("rolling_windows") or [7, 30],
+    )
+
+
+def _run_workflow_wildfire(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from satquery_workflows import workflow_wildfire_burn_severity
+
+        return workflow_wildfire_burn_severity(
+            pre_raster_path=args.get("pre_raster_path"),
+            post_raster_path=args.get("post_raster_path"),
+            lulc_raster_path=args.get("lulc_raster_path"),
+            dem_raster_path=args.get("dem_raster_path"),
+            output_dir=args.get("output_dir") or args.get("analysis_output_dir"),
+        )
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _run_workflow_flood(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from satquery_workflows import workflow_flood_inundation_impact
+
+        weather_request = None
+        if args.get("include_weather", True):
+            weather_request = _weather_request_from_args(args)
+        return workflow_flood_inundation_impact(
+            sar_pre_raster_path=args.get("sar_pre_raster_path"),
+            sar_post_raster_path=args.get("sar_post_raster_path"),
+            lulc_raster_path=args.get("lulc_raster_path"),
+            weather_request=weather_request,
+            dem_raster_path=args.get("dem_raster_path"),
+            output_dir=args.get("output_dir") or args.get("analysis_output_dir"),
+        )
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _run_workflow_drought(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from satquery_workflows import workflow_agricultural_drought_canopy_stress
+
+        weather_request = _weather_request_from_args(args)
+        if weather_request is None:
+            raise ValueError(
+                "Drought workflow requires bbox or latitude and longitude."
+            )
+        return workflow_agricultural_drought_canopy_stress(
+            multispectral_raster_path=args.get("multispectral_raster_path"),
+            weather_request=weather_request,
+            output_dir=args.get("output_dir") or args.get("analysis_output_dir"),
+        )
     except Exception as exc:
         return _wrap_tool_error(exc)
 
@@ -323,6 +430,11 @@ _EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 
     # Tool 8
     "analyze_spatial_landcover_terrain": _run_spatial_landcover_terrain,
+
+    # Named science missions (satquery_workflows.py)
+    "workflow_wildfire_burn_severity": _run_workflow_wildfire,
+    "workflow_flood_inundation_impact": _run_workflow_flood,
+    "workflow_agricultural_drought_canopy_stress": _run_workflow_drought,
 }
 
 

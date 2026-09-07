@@ -39,8 +39,10 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="SatQuery AI",
         description=(
-            "Agentic remote-sensing assistant. "
-            "Send a natural-language query; get satellite imagery metadata back."
+            "Agentic remote-sensing assistant for Tools 1–8. "
+            "POST /api/v1/query with a natural-language query plus location "
+            "(bbox / lat-lon) for fetch tools, or GeoTIFF paths for analysis "
+            "tools 5–8. Open /docs and pick an example."
         ),
         version="0.3.0",
         lifespan=lifespan,

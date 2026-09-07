@@ -43,6 +43,8 @@ class SatQueryState(TypedDict):
 
     start_date: NotRequired[str | None]
     end_date: NotRequired[str | None]
+    post_start_date: NotRequired[str | None]
+    post_end_date: NotRequired[str | None]
     modality: NotRequired[str]
     bands: NotRequired[list[str] | None]
     max_cloud_cover: NotRequired[float]
@@ -74,6 +76,13 @@ class SatQueryState(TypedDict):
     dem_raster_path: NotRequired[str | None]
     zone_mask_path: NotRequired[str | None]
     last_change_mask_path: NotRequired[str | None]
+    index_before_path: NotRequired[str | None]
+    index_after_path: NotRequired[str | None]
+    intent: NotRequired[str | None]
+    agenda: NotRequired[list[dict[str, Any]]]
+    agenda_index: NotRequired[int]
+    handshake_complete: NotRequired[bool]
+    handshake_hops: NotRequired[int]
     class_legend: NotRequired[dict[int, str] | None]
     zone_legend: NotRequired[dict[int, str] | None]
     calculate_fragmentation: NotRequired[bool]
@@ -106,6 +115,8 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
         "longitude": None,
         "start_date": None,
         "end_date": None,
+        "post_start_date": None,
+        "post_end_date": None,
         "modality": "optical",
         "bands": None,
         "max_cloud_cover": 30.0,
@@ -135,6 +146,13 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
         "dem_raster_path": None,
         "zone_mask_path": None,
         "last_change_mask_path": None,
+        "index_before_path": None,
+        "index_after_path": None,
+        "intent": None,
+        "agenda": [],
+        "agenda_index": 0,
+        "handshake_complete": False,
+        "handshake_hops": 0,
         "class_legend": None,
         "zone_legend": None,
         "calculate_fragmentation": True,

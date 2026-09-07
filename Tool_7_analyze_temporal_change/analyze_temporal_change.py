@@ -6,9 +6,11 @@ Calculates absolute delta (T2 - T1), relative percentage shift, statistical sign
 noise thresholding, change severity zoning, and produces continuous delta & discrete change mask GeoTIFFs.
 """
 
+import hashlib
 import io
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -187,6 +189,31 @@ def verify_grid_alignment(
         "t2_crs": str(src2.crs) if src2.crs else "UNREFERENCED"
     }
     return is_aligned, details
+
+
+_WIN_NAME_MAX = 255
+_CHANGE_SUFFIX = "_change_mask.tif"  # longest Tool 7 product suffix
+# GDAL on Windows often fails near MAX_PATH (260) without the \\?\ prefix.
+_MAX_FULL_PATH = 240
+
+
+def _safe_change_stem(path_t1: Path, path_t2: Path, band_name: str, out_dir: Path) -> str:
+    """Keep T1_vs_T2 names when short; hash when Windows/GDAL would reject the path."""
+    band = re.sub(r"[^A-Za-z0-9._-]+", "_", str(band_name))[:24] or "band"
+    raw = f"{path_t1.stem}_vs_{path_t2.stem}_{band}"
+    max_stem = _WIN_NAME_MAX - len(_CHANGE_SUFFIX)
+    try:
+        budget = _MAX_FULL_PATH - len(str(out_dir.resolve())) - len(_CHANGE_SUFFIX) - 1
+        max_stem = min(max_stem, budget)
+    except OSError:
+        max_stem = min(max_stem, 80)
+    max_stem = max(32, max_stem)
+    if len(raw) <= max_stem:
+        return raw
+    digest = hashlib.sha1(
+        f"{path_t1.stem}|{path_t2.stem}|{band}".encode("utf-8")
+    ).hexdigest()[:10]
+    return f"change_{band}_{digest}"
 
 
 # =============================================================================
@@ -374,7 +401,7 @@ def analyze_temporal_change(req: TemporalChangeRequest) -> Dict[str, Any]:
         diff_raster_path = None
         change_mask_path = None
 
-        base_stem = f"{path_t1.stem}_vs_{path_t2.stem}_{band_name_t1}"
+        base_stem = _safe_change_stem(path_t1, path_t2, band_name_t1, out_dir)
 
         if req.generate_difference_raster:
             diff_file = out_dir / f"{base_stem}_difference.tif"

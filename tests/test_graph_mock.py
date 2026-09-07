@@ -19,7 +19,7 @@ def test_optical_query_uses_tool_and_succeeds():
     assert result["tool_results"][0]["duration_ms"] >= 0
     assert result["tool_results"][0]["timestamp"]
     nodes = [row["node"] for row in result["execution_trace"]]
-    assert nodes == ["validate", "plan", "execute", "respond"]
+    assert nodes == ["validate", "plan", "execute", "advance", "respond"]
 
 
 def test_multispectral_query_routes_correctly():
@@ -100,7 +100,7 @@ def test_unrelated_query_is_chat():
     assert result["status"] == "ok"
 
 
-def test_flood_query_uses_sar():
+def test_flood_query_does_not_stop_at_sar_only():
     graph = build_graph()
     result = graph.invoke(
         empty_state(
@@ -108,8 +108,10 @@ def test_flood_query_uses_sar():
             bbox=[77.10, 28.50, 77.30, 28.70],
         )
     )
-    assert result["plan"]["tool"] == "fetch_sar_imagery"
-    assert result["status"] == "success"
+    assert result["status"] == "clarify"
+    assert result["intent"] == "mission_flood"
+    assert result["tool_results"] == []
+    assert result["plan"]["action"] == "clarify"
 
 
 def test_crop_health_uses_multispectral():

@@ -38,4 +38,8 @@ Returns a GeoTIFF file path, scene ID, acquisition time, cloud cover, and raster
 
 ## Tool name for executor
 
-When deciding to use this skill, set `tool` = `fetch_satellite_imagery` in the Plan.
+When deciding to use this skill, set `tool` to exactly one of:
+- `fetch_optical_imagery` for RGB / visual Sentinel-2
+- `fetch_multispectral_imagery` for analytical / vegetation / band-stack Sentinel-2
+
+Never invent names such as Sentinelimagery or SentinelHub_Search.
