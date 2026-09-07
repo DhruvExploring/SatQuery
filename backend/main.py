@@ -48,10 +48,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://localhost:5173",
-        ],
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -59,6 +56,16 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     register_exception_handlers(app)
+
+    # Mount frontend dashboard (serves compiled React dist if built, otherwise frontend root)
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+
+    frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+    target_dir = frontend_dist if frontend_dist.is_dir() else frontend_dir
+    if target_dir.is_dir():
+        app.mount("/", StaticFiles(directory=str(target_dir), html=True), name="frontend")
 
     return app
 
