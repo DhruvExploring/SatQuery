@@ -63,9 +63,15 @@ export default function Navbar({ currentView, onSelectView, healthStatus, health
       </ul>
 
       <div className="nav-actions">
-        <div className="status-pill" id="health-indicator">
+        <div className={`status-pill ${healthStatus === false ? 'offline' : ''}`} id="health-indicator">
           <span className="status-dot"></span>
-          <span>{healthStatus ? `LIVE (${healthLatency || 24}ms)` : 'CONNECTING...'}</span>
+          <span>
+            {healthStatus === null
+              ? 'CONNECTING...'
+              : healthStatus
+                ? `LIVE (${healthLatency ?? '—'}ms)`
+                : 'BACKEND OFFLINE'}
+          </span>
         </div>
       </div>
     </header>

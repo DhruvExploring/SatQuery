@@ -6,31 +6,44 @@ import ExecutionTraceView from './components/ExecutionTraceView';
 import ModelsView from './components/ModelsView';
 import AboutView from './components/AboutView';
 import AuditReportModal from './components/AuditReportModal';
-import { SCENARIOS, INITIAL_TRACE } from './state/scenarios';
 import { checkHealth, runSatelliteQuery } from './api/satqueryApi';
+import { collectRasterAssets } from './api/rasters';
+import { handleQueryResponse } from './api/handleQueryResponse';
+import {
+  applyIntent,
+  createDefaultForm,
+  formToQueryFields,
+  inferIntentFromQuery,
+  isAmbiguousVegetationQuery,
+  missingMustFields,
+  mustFieldMessage,
+  widenDates
+} from './state/intents';
+
+function scrollToFields(fieldIds) {
+  const first = fieldIds.find((id) => document.getElementById(`field-${id}`) || document.getElementById(id));
+  const el = first
+    ? (document.getElementById(`field-${first}`) || document.getElementById(first))
+    : null;
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 
 export default function App() {
   const [currentView, setCurrentView] = useState('analyze');
-  const [activeScenarioKey, setActiveScenarioKey] = useState('agriculture');
-  const scenario = SCENARIOS[activeScenarioKey] || SCENARIOS.agriculture;
-
-  const [queryText, setQueryText] = useState(scenario.query);
-  const [selectedModel, setSelectedModel] = useState('SatQuery-Vision v2.4');
-  const [selectedSensor, setSelectedSensor] = useState('Sentinel-2 Optical (10m)');
-
-  const [activeLayer, setActiveLayer] = useState('main');
-  const [viewMode, setViewMode] = useState('result');
-
+  const [form, setForm] = useState(() => createDefaultForm());
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [backendResponse, setBackendResponse] = useState(null);
-  const [traceSteps, setTraceSteps] = useState(INITIAL_TRACE);
-  const [telemetry, setTelemetry] = useState({ totalTime: '2.36s' });
-
-  const [healthStatus, setHealthStatus] = useState(false);
-  const [healthLatency, setHealthLatency] = useState(24);
+  const [handled, setHandled] = useState(null);
+  const [highlightedFields, setHighlightedFields] = useState([]);
+  const [clarifyReason, setClarifyReason] = useState('');
+  const [formError, setFormError] = useState(null);
+  const [ambiguousOpen, setAmbiguousOpen] = useState(false);
+  const [forceChat, setForceChat] = useState(false);
+  const [telemetry, setTelemetry] = useState({ totalTime: '—' });
+  const [healthStatus, setHealthStatus] = useState(null);
+  const [healthLatency, setHealthLatency] = useState(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
 
-  // Poll backend health
   useEffect(() => {
     let isMounted = true;
     async function updateHealth() {
@@ -48,101 +61,126 @@ export default function App() {
     };
   }, []);
 
-  // Update query when scenario changes
-  const handleSelectScenario = (key) => {
-    setActiveScenarioKey(key);
-    const newScenario = SCENARIOS[key];
-    if (newScenario) {
-      setQueryText(newScenario.query);
-      if (key === 'flood') {
-        setActiveLayer('edge');
-        setSelectedSensor('Sentinel-1 SAR C-Band (10m)');
-      } else if (key === 'deforestation') {
-        setActiveLayer('ndvi');
-        setSelectedSensor('Landsat-8 OLI (30m)');
-      } else {
-        setActiveLayer('main');
-        setSelectedSensor('Sentinel-2 Optical (10m)');
-      }
+  const applyHandled = (next, { stayOnAnalyze = false } = {}) => {
+    setHandled(next);
+    setForm((prev) => ({ ...prev, _lastTrace: next.executionTrace || [] }));
+    if (next.kind === 'clarify') {
+      setClarifyReason(next.copy?.message || next.plan?.reason || next.finalAnswer);
+      setHighlightedFields(next.missingFields || []);
+      setFormError(null);
+      setCurrentView('analyze');
+      setTimeout(() => scrollToFields(next.missingFields || ['bbox']), 50);
+      return;
     }
+    setClarifyReason('');
+    setHighlightedFields([]);
+    setFormError(null);
+    if (next.kind === 'error' && stayOnAnalyze) {
+      setFormError(next);
+      setCurrentView('analyze');
+      return;
+    }
+    if (next.kind === 'error' && (next.httpStatus === 400) && (next.missingFields || []).length) {
+      setHighlightedFields(next.missingFields);
+      setFormError(next);
+      setCurrentView('analyze');
+      setTimeout(() => scrollToFields(next.missingFields), 50);
+      return;
+    }
+    setCurrentView('results');
   };
 
-  // Run analysis query against FastAPI /api/v1/query
-  const handleRunAnalysis = async () => {
-    if (!queryText.trim() || isRunning) return;
+  const handleSelectIntent = (intentId) => {
+    setAmbiguousOpen(false);
+    setForceChat(false);
+    setClarifyReason('');
+    setHighlightedFields([]);
+    setFormError(null);
+    setForm((prev) => applyIntent(prev, intentId, { rewriteQuery: true }));
+    setCurrentView('analyze');
+  };
+
+  const executeQuery = async (nextForm) => {
+    const payloadForm = nextForm || form;
+    if (!payloadForm.query.trim() || isRunning) return;
 
     setIsRunning(true);
+    setFormError(null);
     const startTime = performance.now();
 
     try {
-      const res = await runSatelliteQuery({
-        query: queryText,
-        bbox: scenario.bbox
-      });
-
+      const apiResult = await runSatelliteQuery(formToQueryFields(payloadForm));
       const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
       setTelemetry({ totalTime: `${elapsed}s` });
 
-      // Transform backend trace into UI trace
-      if (Array.isArray(res.execution_trace) && res.execution_trace.length > 0) {
-        const stepDescriptions = {
-          validate: 'Validated bounding box coordinates, parameters, and CRS against EPSG:4326 schema.',
-          plan: 'Confidence-weighted router selected analytical spectral tool pipeline.',
-          execute: 'Processed GeoTIFF rasters, computed multi-spectral indices, and extracted feature masks.',
-          respond: 'Assembled natural language response, verified bounding boxes, and grounded telemetry.'
-        };
+      const next = handleQueryResponse(apiResult);
 
-        const steps = res.execution_trace.map((entry, idx) => {
-          const rawNode = typeof entry === 'string' ? entry : (entry?.node || `step_${idx + 1}`);
-          const summary = typeof entry === 'object' && entry?.summary ? entry.summary : '';
-          const cleanNode = String(rawNode).toLowerCase();
-
-          return {
-            step: idx + 1,
-            node: String(rawNode).toUpperCase(),
-            title: cleanNode === 'validate' ? 'Query Ingestion & Validation'
-              : cleanNode === 'plan' ? 'LangGraph Agent Planner'
-              : cleanNode === 'execute' ? 'Tool Execution & Sensor Head'
-              : cleanNode === 'respond' ? 'Spatial Verification & Synthesis'
-              : `Node: ${rawNode}`,
-            desc: summary || stepDescriptions[cleanNode] || `Executed LangGraph node '${rawNode}'.`,
-            time: `${(0.05 + idx * 0.45).toFixed(2)}s`
-          };
-        });
-        setTraceSteps(steps);
+      if (next.kind === 'error' && next.httpStatus === 500) {
+        console.error('SatQuery 500', next.errors, next.body);
       }
 
-      // Record backend response
-      const narrative = res.response || scenario.narrative;
-      const confidence = res.status === 'success' ? 'High 0.96' : 'Moderate 0.75';
-      const taskBadge = res.tool_name ? res.tool_name.replace(/_/g, ' ').toUpperCase() : scenario.taskBadge;
-
-      setBackendResponse({
-        narrative,
-        confidence,
-        taskBadge,
-        model: selectedModel,
-        data: res
-      });
-
-      // Automatically navigate to Results
-      setCurrentView('results');
-    } catch (err) {
-      console.warn('Backend query error, utilizing localized grounded inference:', err);
-      const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
-      setTelemetry({ totalTime: `${elapsed}s` });
-
-      setBackendResponse({
-        narrative: `${scenario.narrative} (Grounded Localized Inference: ${err.message})`,
-        confidence: scenario.confidence,
-        taskBadge: scenario.taskBadge,
-        model: selectedModel
-      });
-
-      setCurrentView('results');
+      applyHandled(next);
     } finally {
       setIsRunning(false);
     }
+  };
+
+  const handleRunAnalysis = async () => {
+    if (!form.query.trim() || isRunning) return;
+
+    let working = { ...form };
+    const inferred = inferIntentFromQuery(working.query);
+    if (inferred && working.intent !== inferred) {
+      working = applyIntent(working, inferred, { rewriteQuery: false });
+      setForm(working);
+    }
+
+    if (!forceChat && isAmbiguousVegetationQuery(working.query)) {
+      setAmbiguousOpen(true);
+      setCurrentView('analyze');
+      return;
+    }
+
+    if (working.intent) {
+      const missing = missingMustFields(working);
+      if (missing.length) {
+        const message = mustFieldMessage(working);
+        setClarifyReason(message);
+        setHighlightedFields(missing);
+        setFormError(null);
+        setCurrentView('analyze');
+        setTimeout(() => scrollToFields(missing), 50);
+        return;
+      }
+    }
+
+    await executeQuery(working);
+  };
+
+  const handleErrorAction = async (actionId) => {
+    if (actionId === 'retry') {
+      await executeQuery(form);
+      return;
+    }
+    if (actionId === 'widen_dates') {
+      const next = widenDates(form, 30);
+      setForm(next);
+      setCurrentView('analyze');
+      setFormError(null);
+      return;
+    }
+    if (String(actionId).startsWith('orbit:')) {
+      const orbit_direction = String(actionId).split(':')[1];
+      const next = { ...form, orbit_direction, intent: form.intent || 'sar' };
+      setForm(next);
+      await executeQuery(next);
+    }
+  };
+
+  const handlePickVegetation = (choice) => {
+    setAmbiguousOpen(false);
+    setForceChat(false);
+    setForm((prev) => applyIntent({ ...prev, query: choice.query }, choice.id, { rewriteQuery: true }));
   };
 
   return (
@@ -157,37 +195,44 @@ export default function App() {
       <main className="main-content">
         {currentView === 'analyze' && (
           <AnalyzeView
-            scenario={scenario}
-            onSelectScenario={handleSelectScenario}
-            queryText={queryText}
-            setQueryText={setQueryText}
+            form={form}
+            onChangeForm={setForm}
+            onSelectIntent={handleSelectIntent}
             onRunAnalysis={handleRunAnalysis}
             isRunning={isRunning}
-            selectedModel={selectedModel}
-            setSelectedModel={setSelectedModel}
-            selectedSensor={selectedSensor}
-            setSelectedSensor={setSelectedSensor}
+            rasters={collectRasterAssets(handled?.toolResults)}
+            clarify={clarifyReason}
+            highlightedFields={highlightedFields}
+            showAdvanced={showAdvanced}
+            onToggleAdvanced={() => setShowAdvanced((v) => !v)}
+            ambiguousOpen={ambiguousOpen}
+            onPickVegetation={handlePickVegetation}
+            onDismissAmbiguous={() => {
+              setAmbiguousOpen(false);
+              setForceChat(true);
+              executeQuery({ ...form });
+            }}
+            errorOnForm={formError}
+            onErrorAction={handleErrorAction}
           />
         )}
 
         {currentView === 'results' && (
           <ResultsView
-            scenario={scenario}
-            activeLayer={activeLayer}
-            setActiveLayer={setActiveLayer}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
-            queryText={queryText}
-            backendResponse={backendResponse}
+            handled={handled}
+            queryText={form.query}
             onNewAnalysis={() => setCurrentView('analyze')}
             onViewTrace={() => setCurrentView('trace')}
             onOpenReport={() => setIsReportOpen(true)}
+            onSelectIntent={handleSelectIntent}
+            onErrorAction={handleErrorAction}
+            isRunning={isRunning}
           />
         )}
 
         {currentView === 'trace' && (
           <ExecutionTraceView
-            traceSteps={traceSteps}
+            handled={handled}
             telemetry={telemetry}
             onOpenReport={() => setIsReportOpen(true)}
           />
@@ -201,10 +246,9 @@ export default function App() {
       <AuditReportModal
         isOpen={isReportOpen}
         onClose={() => setIsReportOpen(false)}
-        scenario={scenario}
-        queryText={queryText}
-        backendResponse={backendResponse}
-        traceSteps={traceSteps}
+        queryText={form.query}
+        handled={handled}
+        form={form}
       />
     </div>
   );

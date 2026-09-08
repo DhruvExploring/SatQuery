@@ -1,17 +1,25 @@
 import React from 'react';
-import ImageViewer from './ImageViewer';
+import AoiPanel from './AoiPanel';
+import QueryForm from './QueryForm';
+import LiveTrace from './LiveTrace';
+import { INTENTS, VEGETATION_CHOICES } from '../state/intents';
 
 export default function AnalyzeView({
-  scenario,
-  onSelectScenario,
-  queryText,
-  setQueryText,
+  form,
+  onChangeForm,
+  onSelectIntent,
   onRunAnalysis,
   isRunning,
-  selectedModel,
-  setSelectedModel,
-  selectedSensor,
-  setSelectedSensor
+  rasters = [],
+  clarify,
+  highlightedFields,
+  showAdvanced,
+  onToggleAdvanced,
+  ambiguousOpen,
+  onPickVegetation,
+  onDismissAmbiguous,
+  errorOnForm,
+  onErrorAction
 }) {
   const handleKeyDown = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -33,193 +41,149 @@ export default function AnalyzeView({
           </div>
           <div>
             <h1 className="page-title">Satellite <span>Earth Analysis</span></h1>
-            <p className="page-subtitle">Interactive multispectral query & autonomous intelligence generation</p>
+            <p className="page-subtitle">One endpoint — POST /api/v1/query — with a progressive form per intent</p>
           </div>
         </div>
       </div>
 
       <div className="dashboard-grid-analyze">
-        {/* Left: Viewer Card + Metadata Panel */}
-        <ImageViewer scenario={scenario} showOverlay={true}>
-          <div className="metadata-panel">
-            <div className="panel-header">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="16" x2="12" y2="12"></line>
-                <line x1="12" y1="8" x2="12.01" y2="8"></line>
-              </svg>
-              <span>Image Metadata & Telemetry</span>
-            </div>
-            <div className="metadata-grid">
-              <div className="meta-item">
-                <span className="meta-label">BBOX (EPSG:4326)</span>
-                <span className="meta-value" id="canvas-bbox">[{scenario.bbox.join(', ')}]</span>
-              </div>
-              <div className="meta-item">
-                <span className="meta-label">GROUND RESOLUTION</span>
-                <span className="meta-value">10.0m / pixel</span>
-              </div>
-              <div className="meta-item">
-                <span className="meta-label">SENSOR PLATFORM</span>
-                <span className="meta-value">{selectedSensor}</span>
-              </div>
-              <div className="meta-item">
-                <span className="meta-label">CLOUD COVERAGE</span>
-                <span className="meta-value">0.02% (Optimal Clear)</span>
-              </div>
-            </div>
-          </div>
-        </ImageViewer>
+        <AoiPanel
+          form={form}
+          onChange={onChangeForm}
+          highlightedFields={highlightedFields}
+          rasters={rasters}
+          isRunning={isRunning}
+        />
 
-        {/* Right: Query Console Card */}
         <div className="card query-panel">
           <div className="tab-nav">
-            <button className="tab-btn active">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-                <polyline points="2 17 12 22 22 17"></polyline>
-                <polyline points="2 12 12 17 22 12"></polyline>
-              </svg>
+            <button type="button" className="tab-btn active">
               Query Console
             </button>
           </div>
 
           <div className="tab-content-container">
-            {/* Natural Language Prompt */}
             <div className="prompt-box-card">
               <div className="prompt-header">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
                 <span>NATURAL LANGUAGE QUERY</span>
               </div>
               <textarea
                 id="query-input"
                 className="prompt-textarea"
                 rows="3"
-                placeholder="Ask a question about the satellite imagery (e.g. land cover, crop health, flood extent)..."
-                value={queryText}
-                onChange={(e) => setQueryText(e.target.value)}
+                placeholder="Ask SatQuery… e.g. Fetch Sentinel-2 optical imagery, Compute NDVI, Assess flood inundation impact"
+                value={form.query}
+                onChange={(e) => onChangeForm({ ...form, query: e.target.value })}
                 onKeyDown={handleKeyDown}
               />
               <div className="prompt-footer">
-                <span className="char-counter" id="query-char-count">
-                  {queryText.length} / 500 characters
-                </span>
+                <span className="char-counter">{form.query.length} characters</span>
                 <button
                   type="button"
                   className="btn-send"
                   onClick={onRunAnalysis}
                   title="Run Analysis"
-                  disabled={isRunning || !queryText.trim()}
+                  disabled={isRunning || !form.query.trim()}
                 >
                   {isRunning ? '⏳' : '➤'}
                 </button>
               </div>
             </div>
 
-            {/* Scenario Presets Chips */}
             <div className="example-queries-section">
-              <div className="section-label">
-                <span>MISSION PRESETS</span>
-              </div>
+              <div className="section-label"><span>INTENT CHIPS</span></div>
               <div className="example-chips-wrap">
-                <button
-                  type="button"
-                  className={`example-chip ${scenario.id === 'agriculture' ? 'active' : ''}`}
-                  onClick={() => onSelectScenario('agriculture')}
-                  id="btn-scenario-agri"
-                >
-                  🌾 Delhi Agriculture
-                </button>
-                <button
-                  type="button"
-                  className={`example-chip ${scenario.id === 'flood' ? 'active' : ''}`}
-                  onClick={() => onSelectScenario('flood')}
-                  id="btn-scenario-flood"
-                >
-                  🌊 Mumbai Flood (SAR)
-                </button>
-                <button
-                  type="button"
-                  className={`example-chip ${scenario.id === 'deforestation' ? 'active' : ''}`}
-                  onClick={() => onSelectScenario('deforestation')}
-                  id="btn-scenario-deforest"
-                >
-                  🌲 Amazon Deforestation
-                </button>
+                {INTENTS.map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    className={`example-chip ${form.intent === chip.id ? 'active' : ''}`}
+                    onClick={() => onSelectIntent(chip.id)}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Detected Intent Card */}
-            <div className="intent-card" id="query-intent-tag">
-              <div className="intent-icon">✓</div>
-              <div>
-                <div className="intent-title">INTENT: {scenario.taskBadge}</div>
-                <div className="intent-desc">{scenario.task} using {scenario.model}</div>
+            {ambiguousOpen && (
+              <div className="clarify-banner" id="ambiguous-vegetation">
+                <strong>Did you mean something more specific?</strong>
+                <p>
+                  “Vegetation” alone is a chat/capability reply on the backend — it will not compute indices.
+                  Choose a target and we will rewrite the query before calling POST /api/v1/query.
+                </p>
+                <div className="example-chips-wrap" style={{ marginTop: '0.6rem' }}>
+                  {VEGETATION_CHOICES.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      className="example-chip"
+                      onClick={() => onPickVegetation(choice)}
+                    >
+                      {choice.label}
+                    </button>
+                  ))}
+                  <button type="button" className="example-chip" onClick={onDismissAmbiguous}>
+                    Send as chat
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Model Selector */}
-            <div className="model-select-group">
-              <div className="section-label">AI INFERENCE MODEL</div>
-              <select
-                id="model-select"
-                className="model-select-card"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                style={{ width: '100%', color: '#f8fafc', background: '#0a1120' }}
-              >
-                <option value="SatQuery-Vision v2.4">SatQuery-Vision v2.4 (Multimodal Sentinel)</option>
-                <option value="FastGeo-7B">FastGeo-7B (High-Speed VQA)</option>
-                <option value="LandCoverNet-v1">LandCoverNet-v1 (12-Class Semantic)</option>
-                <option value="ChangeDetect-XL">ChangeDetect-XL (Bi-Temporal Diff)</option>
-              </select>
-            </div>
+            {clarify && (
+              <div className="clarify-banner" id="clarify-banner">
+                <strong>A few more inputs are needed</strong>
+                <p>{clarify}</p>
+                <span className="form-hint">This is a form completion prompt, not a failed request. Your query text is kept.</span>
+              </div>
+            )}
 
-            {/* Primary Action Button */}
+            {errorOnForm && (
+              <div className={`error-banner http-${errorOnForm.httpStatus || 400}`}>
+                <strong>{errorOnForm.copy?.title}</strong>
+                <p>{errorOnForm.copy?.message}</p>
+                {errorOnForm.copy?.actions?.length > 0 && (
+                  <div className="example-chips-wrap" style={{ marginTop: '0.5rem' }}>
+                    {errorOnForm.copy.actions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className="example-chip"
+                        onClick={() => onErrorAction(action.id)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <QueryForm
+              form={form}
+              onChange={onChangeForm}
+              highlightedFields={highlightedFields}
+              showAdvanced={showAdvanced}
+              onToggleAdvanced={onToggleAdvanced}
+            />
+
             <button
               type="button"
               className="btn-primary-action"
               id="btn-run-analysis"
               onClick={onRunAnalysis}
-              disabled={isRunning || !queryText.trim()}
+              disabled={isRunning || !form.query.trim()}
             >
-              {isRunning ? 'Processing LangGraph Pipeline...' : 'Run Analysis ➔'}
+              {isRunning ? 'Running LangGraph pipeline…' : 'Run Analysis ➔'}
             </button>
-          </div>
 
-          {/* Suggested Inquiries */}
-          <div className="recent-queries-panel">
-            <div className="recent-header">
-              <div className="recent-title">
-                <span>Suggested Inquiries</span>
+            {(isRunning || (form._lastTrace && form._lastTrace.length > 0)) && (
+              <div className="form-section">
+                <div className="section-label"><span>EXECUTION TRACE</span></div>
+                <LiveTrace isRunning={isRunning} executionTrace={form._lastTrace || []} />
               </div>
-            </div>
-            <ul className="recent-list">
-              <li
-                className="recent-item"
-                onClick={() => setQueryText('What land cover is visible in this area? Estimate percentages.')}
-              >
-                <span className="recent-item-query">"What land cover is visible in this area?"</span>
-                <span className="recent-item-meta">VQA</span>
-              </li>
-              <li
-                className="recent-item"
-                onClick={() => setQueryText('Compute NDVI and assess crop canopy health across cultivated fields.')}
-              >
-                <span className="recent-item-query">"Compute NDVI and assess crop health"</span>
-                <span className="recent-item-meta">Spectral</span>
-              </li>
-              <li
-                className="recent-item"
-                onClick={() => setQueryText('Detect standing flood water using Sentinel-1 SAR dual-polarization backscatter.')}
-              >
-                <span className="recent-item-query">"Detect standing flood water using SAR"</span>
-                <span className="recent-item-meta">Radar</span>
-              </li>
-            </ul>
+            )}
           </div>
         </div>
       </div>

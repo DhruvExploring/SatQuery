@@ -59,7 +59,7 @@ export default function AboutView() {
           <tbody>
             <tr><td>Frontend Architecture</td><td>React 19 + Vite (Native ES Modules & CSS Tokens)</td></tr>
             <tr><td>Backend Engine</td><td>FastAPI + LangGraph + GDAL / Rasterio</td></tr>
-            <tr><td>API Endpoints</td><td><code>POST /api/v1/query</code>, <code>GET /health</code>, <code>GET /docs</code></td></tr>
+            <tr><td>API Endpoints</td><td><code>POST /api/v1/query</code>, <code>GET /health</code>, <code>GET /docs</code> — every analysis uses the single query endpoint</td></tr>
             <tr><td>Coordinate Reference System</td><td>WGS 84 (EPSG:4326)</td></tr>
             <tr><td>Constellations Supported</td><td>Sentinel-1 C-Band SAR, Sentinel-2 Optical MSI, Landsat-8/9 OLI, ECMWF ERA5</td></tr>
           </tbody>

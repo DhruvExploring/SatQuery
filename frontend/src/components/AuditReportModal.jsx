@@ -1,31 +1,27 @@
 import React from 'react';
 
-export default function AuditReportModal({ isOpen, onClose, scenario, queryText, backendResponse }) {
+export default function AuditReportModal({ isOpen, onClose, queryText, handled, form }) {
   if (!isOpen) return null;
 
-  const narrative = backendResponse?.narrative || scenario.narrative;
-  const confidence = backendResponse?.confidence || scenario.confidence;
-  const modelName = backendResponse?.model || scenario.model;
-
-  const handlePrint = () => {
-    window.print();
-  };
+  const bbox = form
+    ? [form.min_lon, form.min_lat, form.max_lon, form.max_lat]
+    : null;
 
   const handleCopy = () => {
     const reportData = {
-      mission: 'SatQuery Autonomous Geospatial Intelligence',
-      sessionId: '#SAT-20250824-001',
+      mission: 'SatQuery',
       timestamp: new Date().toISOString(),
-      scenario: scenario.name,
-      bbox: scenario.bbox,
-      model: modelName,
-      confidence: confidence,
-      query: queryText || scenario.query,
-      findings: narrative,
-      classes: scenario.classes
+      query: queryText,
+      bbox,
+      status: handled?.status,
+      httpStatus: handled?.httpStatus,
+      final_answer: handled?.finalAnswer,
+      plan: handled?.plan,
+      tool_results: handled?.toolResults,
+      errors: handled?.errors,
+      execution_trace: handled?.executionTrace
     };
     navigator.clipboard.writeText(JSON.stringify(reportData, null, 2));
-    alert('Audit report JSON copied to clipboard!');
   };
 
   return (
@@ -33,8 +29,8 @@ export default function AuditReportModal({ isOpen, onClose, scenario, queryText,
       <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1rem' }}>
           <div>
-            <span className="badge badge-format">OFFICIAL AUDIT LOG</span>
-            <h3 style={{ color: '#fff', fontSize: '1.25rem', marginTop: '0.4rem' }}>Mission Intelligence & Provenance Report</h3>
+            <span className="badge badge-format">AUDIT LOG</span>
+            <h3 style={{ color: '#fff', fontSize: '1.25rem', marginTop: '0.4rem' }}>Query provenance</h3>
           </div>
           <button
             type="button"
@@ -46,65 +42,50 @@ export default function AuditReportModal({ isOpen, onClose, scenario, queryText,
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-          {/* Metadata Block */}
           <div style={{ background: 'var(--bg-input)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', fontSize: '0.85rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-              <span style={{ color: 'var(--text-muted)' }}>SESSION IDENTIFIER:</span>
-              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>#SAT-20250824-001</span>
+              <span style={{ color: 'var(--text-muted)' }}>STATUS</span>
+              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>{handled?.status || '—'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-              <span style={{ color: 'var(--text-muted)' }}>TIMESTAMP:</span>
-              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>{new Date().toUTCString()}</span>
+              <span style={{ color: 'var(--text-muted)' }}>HTTP</span>
+              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>{handled?.httpStatus ?? '—'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-              <span style={{ color: 'var(--text-muted)' }}>PROVENANCE SHA-256:</span>
-              <span style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-              <span style={{ color: 'var(--text-muted)' }}>TARGET AOI BBOX:</span>
-              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>[{scenario.bbox.join(', ')}] (EPSG:4326)</span>
+              <span style={{ color: 'var(--text-muted)' }}>PLAN TOOL</span>
+              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>{handled?.plan?.tool || handled?.toolName || '—'}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ color: 'var(--text-muted)' }}>INFERENCE MODEL:</span>
-              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>{modelName} (Confidence: {confidence})</span>
+              <span style={{ color: 'var(--text-muted)' }}>BBOX</span>
+              <span style={{ color: '#fff', fontFamily: 'var(--font-mono)' }}>{bbox ? `[${bbox.join(', ')}]` : '—'}</span>
             </div>
           </div>
 
           <div>
-            <h4 style={{ color: 'var(--accent-cyan)', fontSize: '0.9rem', marginBottom: '0.3rem' }}>1. Mission Inquiry</h4>
-            <p style={{ color: '#cbd5e1', fontSize: '0.9rem' }}>"{queryText || scenario.query}"</p>
+            <h4 style={{ color: 'var(--accent-cyan)', fontSize: '0.9rem', marginBottom: '0.3rem' }}>1. Query</h4>
+            <p style={{ color: '#cbd5e1', fontSize: '0.9rem' }}>"{queryText || '—'}"</p>
           </div>
 
           <div>
-            <h4 style={{ color: 'var(--accent-cyan)', fontSize: '0.9rem', marginBottom: '0.3rem' }}>2. Spatial Reasoning & Grounded Synthesis</h4>
-            <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: 1.6 }}>{narrative}</p>
+            <h4 style={{ color: 'var(--accent-cyan)', fontSize: '0.9rem', marginBottom: '0.3rem' }}>2. final_answer</h4>
+            <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: 1.6 }}>{handled?.finalAnswer || '—'}</p>
           </div>
 
-          <div>
-            <h4 style={{ color: 'var(--accent-cyan)', fontSize: '0.9rem', marginBottom: '0.4rem' }}>3. Verified Spatial Distributions</h4>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-              {scenario.classes?.map((cls, idx) => (
-                <span key={idx} className={`class-pill ${cls.className}`}>
-                  ● {cls.name}
-                </span>
-              ))}
+          {Array.isArray(handled?.errors) && handled.errors.length > 0 && (
+            <div>
+              <h4 style={{ color: 'var(--accent-cyan)', fontSize: '0.9rem', marginBottom: '0.3rem' }}>3. errors[]</h4>
+              <ul className="error-list">
+                {handled.errors.map((err, idx) => <li key={idx}>{err}</li>)}
+              </ul>
             </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '0.75rem', background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '0.85rem', borderRadius: 'var(--radius-md)' }}>
-            <span style={{ color: '#10b981', fontWeight: 'bold' }}>✓</span>
-            <div style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>
-              <strong style={{ color: '#10b981' }}>ISO 19115 & OGC Georeference Compliant</strong>
-              <p style={{ marginTop: '2px' }}>This report certifies that bounding boxes, affine transformations, and sensor radiometric calibrations conform to standard Open Geospatial Consortium (OGC) specifications without synthetic coordinate hallucination.</p>
-            </div>
-          </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
           <button type="button" className="btn-secondary" onClick={handleCopy}>
             Copy JSON
           </button>
-          <button type="button" className="btn-secondary primary-shade" onClick={handlePrint}>
+          <button type="button" className="btn-secondary primary-shade" onClick={() => window.print()}>
             Print / Save PDF
           </button>
         </div>

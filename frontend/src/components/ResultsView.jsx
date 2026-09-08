@@ -1,23 +1,59 @@
 import React from 'react';
-import ImageViewer from './ImageViewer';
-import { LAYERS } from '../state/scenarios';
+import ToolResultsPanel from './ToolResultsPanel';
+import LiveTrace from './LiveTrace';
+import RasterViewer from './RasterViewer';
+import { collectRasterAssets } from '../api/rasters';
+import { INTENTS } from '../state/intents';
+
+function CapabilityGuide({ finalAnswer, onSelectIntent }) {
+  return (
+    <div className="capability-guide">
+      <p className="ai-narrative-text">{finalAnswer}</p>
+      <p className="form-hint">
+        No tools ran. This is a capability guide, not an analysis — there is no imagery to show.
+      </p>
+      <div className="example-chips-wrap">
+        {INTENTS.map((chip) => (
+          <button
+            key={chip.id}
+            type="button"
+            className="example-chip"
+            onClick={() => onSelectIntent(chip.id)}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function ResultsView({
-  scenario,
-  activeLayer,
-  setActiveLayer,
-  viewMode,
-  setViewMode,
+  handled,
   queryText,
-  backendResponse,
   onNewAnalysis,
   onViewTrace,
-  onOpenReport
+  onOpenReport,
+  onSelectIntent,
+  onErrorAction,
+  isRunning
 }) {
-  const narrative = backendResponse?.narrative || scenario.narrative;
-  const confidence = backendResponse?.confidence || scenario.confidence;
-  const taskBadge = backendResponse?.taskBadge || scenario.taskBadge;
-  const classes = scenario.classes || [];
+  const kind = handled?.kind || 'empty';
+  const toolName = handled?.toolName;
+  const httpStatus = handled?.httpStatus;
+  const copy = handled?.copy || {};
+  const toolResults = handled?.toolResults || [];
+  const rasters = collectRasterAssets(toolResults);
+  const trace = handled?.executionTrace || [];
+  const hops = trace.length;
+
+  const statusBadge = kind === 'success'
+    ? 'badge-success'
+    : kind === 'ok'
+      ? 'badge-format'
+      : kind === 'error'
+        ? 'badge-danger'
+        : 'badge-tag';
 
   return (
     <div className="view-page active" id="view-results">
@@ -42,113 +78,130 @@ export default function ResultsView({
           <div className="meta-chip">
             <div className="meta-chip-icon">🛰</div>
             <div className="meta-chip-content">
-              <span className="meta-chip-label">MODEL</span>
-              <span className="meta-chip-val" id="res-model">{scenario.model}</span>
+              <span className="meta-chip-label">STATUS</span>
+              <span className="meta-chip-val">{handled?.status || '—'}</span>
             </div>
           </div>
           <div className="meta-chip">
             <div className="meta-chip-icon">🎯</div>
             <div className="meta-chip-content">
-              <span className="meta-chip-label">TASK</span>
-              <span className="meta-chip-val">{taskBadge}</span>
+              <span className="meta-chip-label">TOOL</span>
+              <span className="meta-chip-val">{toolName ? String(toolName).replace(/_/g, ' ') : 'none'}</span>
             </div>
           </div>
           <div className="meta-chip">
             <div className="meta-chip-icon">🆔</div>
             <div className="meta-chip-content">
-              <span className="meta-chip-label">SESSION</span>
-              <span className="meta-chip-val" id="res-session-id">#SAT-20250824-001</span>
+              <span className="meta-chip-label">HTTP</span>
+              <span className="meta-chip-val">{httpStatus || '—'}</span>
             </div>
           </div>
         </div>
       </div>
 
       <div className="dashboard-grid-results">
-        {/* Left: Viewer with View Mode Toggle and Layer Carousel */}
-        <ImageViewer
-          scenario={scenario}
-          activeLayer={activeLayer}
-          viewMode={viewMode}
-          onToggleMode={setViewMode}
-          showOverlay={true}
-        >
-          <div className="layer-carousel-container">
-            {LAYERS.map((layer) => (
-              <div
-                key={layer.id}
-                className={`layer-thumbnail-card ${activeLayer === layer.id ? 'active' : ''}`}
-                onClick={() => setActiveLayer(layer.id)}
-                id={`layer-card-${layer.id}`}
-              >
-                <img src={layer.thumb} alt={layer.name} className="layer-thumb-preview" />
-                <span className="layer-thumb-title">{layer.name}</span>
-              </div>
-            ))}
-          </div>
-        </ImageViewer>
+        {(kind === 'success' || (kind === 'error' && rasters.length > 0)) && rasters.length > 0 ? (
+          <RasterViewer rasters={rasters} isRunning={isRunning} />
+        ) : (
+          <div className="card results-main-card">
+            <div className="results-main-header">
+              <span className={`badge ${statusBadge}`}>{kind.toUpperCase()}</span>
+              {hops > 1 && (
+                <span className="badge badge-format">{hops} graph hops</span>
+              )}
+            </div>
 
-        {/* Right: AI Response & Spatial Reasoning Card */}
+            {kind === 'empty' && (
+              <p className="form-hint" style={{ padding: '1.5rem' }}>
+                Run a query from Analyze. Imagery appears here when a tool returns a GeoTIFF.
+              </p>
+            )}
+
+            {kind === 'ok' && (
+              <div style={{ padding: '1.25rem' }}>
+                <h3 style={{ color: '#fff', marginBottom: '0.75rem' }}>{copy.title}</h3>
+                <CapabilityGuide finalAnswer={handled.finalAnswer} onSelectIntent={onSelectIntent} />
+              </div>
+            )}
+
+            {kind === 'error' && (
+              <div className={`error-banner http-${httpStatus}`} style={{ margin: '1rem' }}>
+                <strong>{copy.title}</strong>
+                <p>{copy.message}</p>
+                {Array.isArray(handled.errors) && handled.errors.length > 0 && (
+                  <ul className="error-list">
+                    {handled.errors.map((err, idx) => <li key={idx}>{err}</li>)}
+                  </ul>
+                )}
+                {copy.actions?.length > 0 && (
+                  <div className="example-chips-wrap" style={{ marginTop: '0.6rem' }}>
+                    {copy.actions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        className="example-chip"
+                        onClick={() => onErrorAction(action.id)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {kind === 'success' && (
+              <div style={{ padding: '1.25rem' }}>
+                <h3 style={{ color: '#fff', marginBottom: '0.75rem' }}>{copy.title}</h3>
+                <div className="ai-narrative-text">{handled.finalAnswer}</div>
+              </div>
+            )}
+
+            {isRunning && (
+              <div style={{ padding: '1.25rem' }}>
+                <LiveTrace isRunning executionTrace={trace} />
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="card ai-response-card">
           <div className="ai-response-header">
             <div className="ai-title-group">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M12 16v-4"></path>
-                <path d="M12 8h.01"></path>
-              </svg>
-              <span>AI Spatial Synthesis</span>
+              <span>{kind === 'ok' ? 'Capability guide' : 'Tool results'}</span>
             </div>
             <div className="ai-badges">
-              <span className="badge badge-success" id="res-confidence">
-                {confidence}
-              </span>
-              <span className="badge badge-format" id="res-task-badge">
-                {taskBadge}
-              </span>
+              <span className={`badge ${statusBadge}`}>{handled?.status || 'idle'}</span>
             </div>
           </div>
 
-          <div className="ai-narrative-text" id="res-narrative">
-            {narrative}
-          </div>
+          {queryText && (
+            <p className="form-hint">Query: “{queryText}”</p>
+          )}
 
-          <div className="detected-classes-section">
-            <div className="detected-classes-title">
-              <span>DETECTED LAND COVER & SPATIAL CLASSES</span>
-            </div>
-            <div className="classes-pills-wrap" id="res-classes-container">
-              {classes.map((cls, idx) => (
-                <span key={idx} className={`class-pill ${cls.className}`}>
-                  ● {cls.name}
-                </span>
-              ))}
-            </div>
-          </div>
+          {kind === 'success' && handled?.finalAnswer && rasters.length > 0 && (
+            <div className="ai-narrative-text">{handled.finalAnswer}</div>
+          )}
+
+          {hops > 1 && kind === 'success' && (
+            <LiveTrace executionTrace={trace} hopCapHit={handled?.hopCapHit} />
+          )}
+
+          {kind === 'ok' ? (
+            <p className="form-hint">No GeoTIFF or analysis products — the planner chose chat.</p>
+          ) : (
+            <ToolResultsPanel toolResults={toolResults} kind={kind} />
+          )}
 
           <div className="action-buttons-group">
-            <button
-              type="button"
-              className="btn-secondary"
-              id="btn-download-geotiff"
-              onClick={() => alert('Downloading calibrated GeoTIFF raster stream...')}
-            >
-              ⬇ GeoTIFF
-            </button>
-            <button
-              type="button"
-              className="btn-secondary primary-shade"
-              id="btn-generate-report"
-              onClick={onOpenReport}
-            >
+            <button type="button" className="btn-secondary primary-shade" onClick={onOpenReport}>
               📄 Audit Report
             </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              id="btn-view-trace-direct"
-              onClick={onViewTrace}
-            >
+            <button type="button" className="btn-secondary" onClick={onViewTrace}>
               ⚡ View Trace
+            </button>
+            <button type="button" className="btn-secondary" onClick={onNewAnalysis}>
+              New query
             </button>
           </div>
         </div>
