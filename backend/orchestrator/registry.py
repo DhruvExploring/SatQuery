@@ -1,6 +1,7 @@
 """Single source of truth for SatQuery tools, routing and trusted arguments."""
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 from backend.config.settings import settings
@@ -18,6 +19,9 @@ TOOL_SPATIAL = "analyze_spatial_landcover_terrain"
 TOOL_WILDFIRE = "workflow_wildfire_burn_severity"
 TOOL_FLOOD = "workflow_flood_inundation_impact"
 TOOL_DROUGHT = "workflow_agricultural_drought_canopy_stress"
+TOOL_VLM = "analyze_imagery_vlm"
+TOOL_MARK_REGION = "mark_region_in_image"
+TOOL_VISUAL_COMPARE = "compare_images_visually"
 
 PLANNER_PRIORITY = (
     TOOL_SAR,
@@ -101,6 +105,17 @@ def _tool7_paths(state: SatQueryState) -> tuple[str | None, str | None]:
     return before, after
 
 
+def _default_change_threshold(before: str | None, after: str | None) -> float:
+    """0.15 suits a -1..1 vegetation index; SAR backscatter is in dB, where a
+    real flood/burn signal is several dB, so a much larger absolute
+    threshold is needed or nearly every pixel reads as "changed" from normal
+    speckle noise alone. Detected from the file names, same heuristic
+    handshake.py's _relative_percent_for_tool already uses for SAR.
+    """
+    joined = ((before or "") + (after or "")).lower()
+    return 3.0 if "sar" in joined else 0.15
+
+
 def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
     """Build tool args only from request state/defaults and prior trusted outputs."""
     if tool in (TOOL_OPTICAL, "fetch_satellite_imagery"):
@@ -141,12 +156,17 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
         }
         return reconcile_sar_args(args, state)
     if tool == TOOL_WEATHER:
+        # Unlike the imagery fetch tools, "no dates given" for weather most
+        # plausibly means "conditions right now" -- default to the last 7
+        # days through today rather than the fixed historical demo window,
+        # so Tool 4's current/forecast support is actually reachable without
+        # the caller having to name today's date explicitly.
         return {
             "latitude": state.get("latitude"),
             "longitude": state.get("longitude"),
             "bbox": state.get("bbox"),
-            "start_date": state.get("start_date") or settings.default_start_date,
-            "end_date": state.get("end_date") or settings.default_end_date,
+            "start_date": state.get("start_date") or (date.today() - timedelta(days=7)).isoformat(),
+            "end_date": state.get("end_date") or date.today().isoformat(),
         }
     if tool == TOOL_INDICES:
         return {
@@ -165,12 +185,15 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
         }
     if tool == TOOL_TEMPORAL:
         before, after = _tool7_paths(state)
+        threshold_value = state.get("threshold_value")
+        if threshold_value is None:
+            threshold_value = _default_change_threshold(before, after)
         return {
             "raster_before_path": before,
             "raster_after_path": after,
             "band_selection": state.get("band_selection", 1),
             "threshold_type": state.get("threshold_type", "absolute"),
-            "threshold_value": state.get("threshold_value", 0.15),
+            "threshold_value": threshold_value,
             "relative_change_threshold_percent": state.get("relative_change_threshold_percent"),
             "mask_encoding": state.get("mask_encoding", "bipolar_3class"),
             "output_dir": state.get("analysis_output_dir"),
@@ -225,6 +248,23 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
             "start_date": state.get("start_date") or settings.default_start_date,
             "end_date": state.get("end_date") or settings.default_end_date,
         }
+    if tool in (TOOL_VLM, TOOL_MARK_REGION):
+        # Same underlying vision call either way -- the provider's own
+        # system prompt (backend/vision/openai_provider.py) is what decides
+        # whether to also return a bbox, based on the query wording. This
+        # tool is just a distinct, explicit name the planner can choose for
+        # "locate/mark X" requests instead of a generic description.
+        return {
+            "image_path": state.get("input_file") or _last_raster_path(state),
+            "query": state.get("query"),
+        }
+    if tool == TOOL_VISUAL_COMPARE:
+        before, after = _tool7_paths(state)
+        return {
+            "image_path_a": before,
+            "image_path_b": after,
+            "query": state.get("query"),
+        }
     raise ValueError(f"Unknown tool: {tool}")
 
 
@@ -259,6 +299,8 @@ def format_tool_success(tool: str, result: dict[str, Any]) -> str:
         if summary:
             return f"{pipeline} completed successfully. Summary: {summary}"
         return f"{pipeline} completed successfully."
+    if tool in (TOOL_VLM, TOOL_MARK_REGION, TOOL_VISUAL_COMPARE):
+        return result.get("text") or "Vision interpretation completed."
     return f"{tool} completed successfully."
 
 
@@ -292,9 +334,14 @@ TOOL_SPEC: dict[str, dict[str, Any]] = {
     },
     TOOL_WEATHER: {
         "name": TOOL_WEATHER,
-        "description": "Fetch weather/environmental context for a location.",
+        "description": (
+            "Fetch weather/environmental context for a location and date range -- "
+            "historical (ERA5 archive), current conditions, or a short-range forecast "
+            "(up to ~16 days ahead), chosen automatically from the dates given. If no "
+            "dates are given, defaults to the last 7 days through today."
+        ),
         "requires": ["bbox_or_coords"],
-        "keywords": ("weather", "rainfall", "temperature", "precipitation", "environment"),
+        "keywords": ("weather", "rainfall", "temperature", "precipitation", "environment", "forecast", "right now", "currently", "today's weather"),
         "location": "weather",
         "args_builder": lambda state: trusted_args_for_tool(TOOL_WEATHER, state),
         "response_formatter": lambda result: format_tool_success(TOOL_WEATHER, result),
@@ -362,6 +409,70 @@ TOOL_SPEC: dict[str, dict[str, Any]] = {
         "args_builder": lambda state: trusted_args_for_tool(TOOL_DROUGHT, state),
         "response_formatter": lambda result: format_tool_success(TOOL_DROUGHT, result),
     },
+    TOOL_VLM: {
+        "name": TOOL_VLM,
+        "description": (
+            "Interpret a rendered satellite image with a vision-language model "
+            "(EarthMind, InternVL, or an OpenAI vision model, depending on config), "
+            "answering a natural-language question about what it shows."
+        ),
+        "requires": ["image_path"],
+        "keywords": (
+            "describe this image",
+            "describe the image",
+            "what do you see",
+            "what does this look like",
+            "interpret this imagery",
+            "interpret this image",
+            "visually describe",
+        ),
+        "location": "vlm",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_VLM, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_VLM, result),
+    },
+    TOOL_MARK_REGION: {
+        "name": TOOL_MARK_REGION,
+        "description": (
+            "Locate a specific region, object, or feature the user asks about in an "
+            "image, returning both a description and an approximate bounding box "
+            "(as fractions of image width/height) for where it is -- a rough visual "
+            "estimate from a general vision model, not a precise pixel measurement."
+        ),
+        "requires": ["image_path"],
+        "keywords": (
+            "mark the region",
+            "mark this region",
+            "mark the area",
+            "highlight the region",
+            "highlight the area",
+            "circle the",
+            "draw a box around",
+            "point out",
+            "where exactly is",
+            "locate the",
+        ),
+        "location": "vlm",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_MARK_REGION, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_MARK_REGION, result),
+    },
+    TOOL_VISUAL_COMPARE: {
+        "name": TOOL_VISUAL_COMPARE,
+        "description": (
+            "Qualitatively compare two images with a vision-language model and describe "
+            "what's visually similar or different between them (land cover, built-up area, "
+            "vegetation, water extent, visible damage). Unlike analyze_temporal_change, this "
+            "never requires the two rasters to be grid-aligned -- it works across different "
+            "sensors, dates, or even different locations, and will say so if the two images "
+            "don't actually show the same place. Prefer this over analyze_temporal_change "
+            "whenever the two rasters might not be pixel-aligned, or after "
+            "analyze_temporal_change has already failed due to misalignment."
+        ),
+        "requires": ["raster_before_path", "raster_after_path"],
+        "keywords": (),
+        "location": "files",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_VISUAL_COMPARE, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_VISUAL_COMPARE, result),
+    },
     "fetch_satellite_imagery": {
         "name": "fetch_satellite_imagery",
         "description": "Fetch Sentinel-2 optical imagery for a bbox and date range.",
@@ -391,12 +502,14 @@ TOOL_REGISTRY = {
 }
 
 _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    (TOOL_MARK_REGION, ("mark the region", "mark this region", "mark the area", "highlight the region", "highlight the area", "circle the", "draw a box around", "point out", "where exactly is", "locate the")),
+    (TOOL_VLM, ("describe this image", "describe the image", "what do you see", "what does this look like", "interpret this imagery", "interpret this image", "visually describe")),
     (TOOL_SPATIAL, ("land cover", "landcover", "lulc", "worldcover", "terrain", "slope", "elevation", "fragmentation", "patch")),
     (TOOL_TEMPORAL, ("temporal change", "change detection", "change between", "compare dates", "before and after", "change mask", "deforestation", "vegetation loss", "vegetation gain")),
     (TOOL_INDICES, ("ndvi", "evi", "savi", "gndvi", "ndre", "ndmi", "ndwi", "msavi", "nbr", "vegetation index", "vegetation indices", "compute indices")),
     (TOOL_INSPECT, ("inspect geotiff", "inspect tiff", "inspect this geotiff", "inspect raster", "geotiff metadata", "raster metadata", "raster qa", "quality check", "check raster", "crs", "nodata", "histogram")),
     (TOOL_SAR, ("sar", "radar", "sentinel-1", "sentinel1", "backscatter", "vv", "vh", "flood")),
-    (TOOL_WEATHER, ("weather", "rainfall", "temperature", "precipitation", "environment")),
+    (TOOL_WEATHER, ("weather", "rainfall", "temperature", "precipitation", "environment", "forecast", "right now", "currently", "today's weather")),
     (TOOL_MULTI, ("multispectral", "multispectral imagery", "spectral bands", "crop health")),
     (TOOL_OPTICAL, ("satellite", "imagery", "optical", "sentinel-2", "sentinel2", "image", "download", "visual")),
 ]
@@ -422,6 +535,8 @@ def location_ready_for_tool(tool: str, state: SatQueryState) -> bool:
         return bool(before and after)
     if loc == "lulc":
         return bool(state.get("lulc_raster_path"))
+    if loc == "vlm":
+        return bool(state.get("input_file") or _last_raster_path(state))
     if loc == "weather":
         return bool(
             state.get("bbox")
@@ -456,7 +571,11 @@ def enforce_call_tool_location(plan: Plan, state: SatQueryState) -> Plan:
     if tool not in TOOL_SPEC:
         return {"action": "respond_error", "tool": None, "args": {}, "reason": f"Unknown tool '{tool}'."}
     if not location_ready_for_tool(tool, state):
-        return {"action": "clarify", "tool": None, "args": {}, "reason": _missing_input_reason(tool)}
+        # Keep `tool` on the clarify plan (unlike the unknown-tool case above)
+        # so handshake.build_plan_update can recover it — a fetch tool that's
+        # only missing a bbox may still be reachable by deriving one from an
+        # uploaded file's own geospatial bounds instead of asking the user.
+        return {"action": "clarify", "tool": tool, "args": {}, "reason": _missing_input_reason(tool)}
     plan["args"] = trusted_args_for_tool(tool, state)
     return plan
 
@@ -469,6 +588,7 @@ def _missing_input_reason(tool: str) -> str:
         "file": f"{tool} requires a GeoTIFF input file.",
         "files": f"{tool} requires raster_before_path and raster_after_path.",
         "lulc": f"{tool} requires lulc_raster_path.",
+        "vlm": f"{tool} requires a rendered image or GeoTIFF (input_file) to interpret.",
         "mission_pair_lulc": (
             f"{tool} requires raster_before_path, raster_after_path, and lulc_raster_path."
         ),

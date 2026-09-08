@@ -17,7 +17,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.errors import register_exception_handlers
+from backend.api.routes.models import router as models_router
 from backend.api.routes.query import router
+from backend.api.routes.rasters import router as rasters_router
+from backend.api.routes.uploads import router as uploads_router
+from backend.config.settings import settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,11 +30,51 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _warm_up_llm_clients() -> None:
+    """Eagerly import/build the LLM SDKs this deployment actually uses.
+
+    langchain_openai/langchain_anthropic each pull in hundreds of submodules
+    (the openai SDK alone has ~500 files) on first import. Left lazy, that
+    cold-import cost lands on whichever live request happens to be first —
+    which looks exactly like a hung request, especially on a memory-constrained
+    machine where the extra disk I/O can stall for minutes. Paying that cost
+    once here, at startup, keeps it out of request latency entirely.
+    """
+    if settings.orchestrator_provider != "mock":
+        try:
+            logger.info(
+                "Warming up orchestrator LLM client (provider=%s)...",
+                settings.orchestrator_provider,
+            )
+            from backend.orchestrator.llm import _build_llm_client
+
+            _build_llm_client()
+            logger.info("Orchestrator LLM client ready.")
+        except Exception as exc:
+            logger.warning(
+                "Orchestrator LLM warm-up failed (%r) — will build lazily on first request.",
+                exc,
+            )
+
+    if settings.vision_tool_enabled and settings.vision_tool_provider == "openai":
+        try:
+            logger.info("Warming up vision tool SDK import (openai)...")
+            import langchain_openai  # noqa: F401
+
+            logger.info("Vision tool SDK ready.")
+        except Exception as exc:
+            logger.warning(
+                "Vision tool warm-up failed (%r) — will import lazily on first call.",
+                exc,
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("SatQuery API starting up — importing graph...")
     from backend.orchestrator.graph import satquery_graph  # noqa: F401
     logger.info("Graph ready.")
+    _warm_up_llm_clients()
     yield
     logger.info("SatQuery API shutting down.")
 
@@ -50,13 +94,16 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(settings.cors_allowed_origins),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     app.include_router(router)
+    app.include_router(rasters_router)
+    app.include_router(models_router)
+    app.include_router(uploads_router)
     register_exception_handlers(app)
 
     # Mount frontend dashboard (serves compiled React dist if built, otherwise frontend root)

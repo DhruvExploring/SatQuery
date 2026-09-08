@@ -1,7 +1,7 @@
 """Test helpers.
 
-Production always calls real tools. Offline unit tests stub execute_tool
-here only — there is no SATQUERY_MOCK_TOOLS product flag.
+Production always calls real tools — there is no product-level "mock tools"
+flag. Offline unit tests stub execute_tool here only.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import os
 from typing import Any
 
 # Prefer keyword planner in unit tests (deterministic).
-os.environ["SATQUERY_MOCK_PLANNER"] = "true"
+os.environ["SATQUERY_ORCHESTRATOR_PROVIDER"] = "mock"
 
 
 def _stub_execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:

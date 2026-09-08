@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env.docker
+    ports:
+      - "${SATQUERY_BACKEND_PORT:-8000}:8000"
+    volumes:
+      - raster-data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      API_BASE_URL: ${FRONTEND_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Optional local-model sidecar for the vision tool. Most deployments never
+  # enable this — the vision tool's primary path is a hosted API
+  # (SATQUERY_VISION_TOOL_PROVIDER=openai). Enable with:
+  #   docker compose --profile local-models up local-vlm
+  local-vlm:
+    build:
+      context: ./local_model_server
+      dockerfile: Dockerfile
+    profiles: ["local-models"]
+    env_file:
+      - local_model_server/.env
+    ports:
+      - "${LOCAL_VLM_PORT:-8080}:8080"
+    volumes:
+      - hf-cache:/app/.hf-cache
+    restart: unless-stopped
+    # Uncomment on a Linux host with the NVIDIA Container Toolkit installed.
+    # Docker Desktop for Mac cannot pass through GPU/Metal acceleration to
+    # Linux containers — use local_model_server/README.md's native run path
+    # instead for real speed on this machine.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+volumes:
+  raster-data:
+  hf-cache:

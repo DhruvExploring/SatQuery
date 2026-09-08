@@ -18,7 +18,7 @@ def _ensure_venv_site_packages() -> None:
     installed only in the venv (e.g. rasterio) raise ModuleNotFoundError.
 
     Linux/CI/Docker never touch sys.path here. Delete this helper once the
-    documented launch is `.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload`.
+    documented launch is `.\\.venv\\Scripts\\python.exe -m uvicorn backend.main:app --reload`.
     """
     if sys.platform != "win32":
         return

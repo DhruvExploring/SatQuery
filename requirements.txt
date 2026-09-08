@@ -5,6 +5,7 @@ scipy>=1.10.0
 pydantic>=2.5.0
 fastmcp>=0.1.0
 python-dotenv>=1.0.0
+pillow>=10.0.0
 
 shapely
 pyproj
@@ -14,8 +15,16 @@ langchain>=0.3.0
 langchain-core
 langchain-openai>=0.3.0
 langchain-anthropic>=0.3.0
+# Pinned to the lowest version langchain-openai allows (openai<4.0.0,>=2.45.0):
+# newer openai releases ship a much larger SDK type surface (chatkit, graders,
+# expansive beta.responses types), which made pydantic-core's one-time schema
+# build for ChatOpenAI unpredictably slow (observed hangs of 10+ minutes on a
+# memory-constrained machine, vs ~2s normally) the first time it's built in a
+# process. Smaller SDK surface = less for pydantic-core to compile.
+openai==2.45.0
 
 fastapi
 uvicorn[standard]
+python-multipart
 httpx
 pytest

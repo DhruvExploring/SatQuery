@@ -14,7 +14,11 @@ subsidence monitoring).
 
 ## Required inputs
 
-- `bbox`: Bounding box as [min_lon, min_lat, max_lon, max_lat]. Ask for this if missing.
+- `bbox`: Bounding box as [min_lon, min_lat, max_lon, max_lat]. If missing but the
+  request already has an uploaded/referenced GeoTIFF, the orchestrator derives
+  it from that file's own bounds automatically — see the
+  derive-aoi-from-uploaded-file skill. Only ask the user directly when there is
+  truly no file and no bbox to work from.
 - `start_date`: Start of date range in YYYY-MM-DD format.
 - `end_date`: End of date range in YYYY-MM-DD format.
 
@@ -32,12 +36,6 @@ subsidence monitoring).
 
 - User asks for optical or Sentinel-2 data → use fetch-satellite-imagery instead
 - User asks a general question without a location → respond with chat action
-
-## Current status
-
-This tool is registered and routed correctly. The implementation (Sentinel-1 API integration)
-is pending — it will be added in a future notebook. Until then, calling this tool returns
-a "not implemented" error, which is handled gracefully by the orchestrator.
 
 ## Tool name for executor
 

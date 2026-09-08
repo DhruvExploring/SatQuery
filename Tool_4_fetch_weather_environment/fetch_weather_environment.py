@@ -3,6 +3,12 @@
 Extracts global meteorological reanalysis data (ERA5 / ERA5-Land) via Open-Meteo
 to provide factual atmospheric, thermal, and hydrological context for satellite observations
 with strict separation between measured metrics and derived environmental stress indicators.
+
+For a date range that reaches into the last few days or the future, the ERA5
+archive (below) is stale or empty -- those days are instead served by
+Open-Meteo's forecast API, which also covers real current conditions and true
+forecasts. A range spanning both is split and the two daily series are
+merged; see _split_date_range/_fetch_daily_for_point.
 """
 
 import json
@@ -10,7 +16,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 from typing import Literal, Optional, List, Dict, Any, Tuple
 
@@ -31,10 +37,17 @@ except (ImportError, Exception):
 # =============================================================================
 
 ARCHIVE_API_URL = "https://archive-api.open-meteo.com/v1/archive"
+FORECAST_API_URL = "https://api.open-meteo.com/v1/forecast"
+
+# ERA5/ERA5-Land archive assimilation latency: days newer than this are
+# unreliable/absent from the archive and are fetched from the forecast API
+# instead (see _split_date_range).
+ARCHIVE_LATENCY_DAYS = 5
 
 @dataclass(frozen=True)
 class ToolConfig:
     archive_api_url: str = ARCHIVE_API_URL
+    forecast_api_url: str = FORECAST_API_URL
 
 CONFIG = ToolConfig()
 
@@ -153,37 +166,105 @@ def resolve_weather_sampling_points(req: WeatherEnvironmentRequest) -> tuple[lis
 # 4. Core Weather Processing & Environmental Indicators
 # =============================================================================
 
+def _split_date_range(
+    start_date: str, end_date: str
+) -> tuple[tuple[str, str] | None, tuple[str, str] | None]:
+    """Split [start_date, end_date] into an archive-eligible sub-range and a
+    forecast-eligible sub-range (either may be None). Days newer than
+    ARCHIVE_LATENCY_DAYS from today go to the forecast API; everything older
+    goes to the archive, unchanged from this tool's original behavior.
+    """
+    today = datetime.now(timezone.utc).date()
+    cutoff = today - timedelta(days=ARCHIVE_LATENCY_DAYS)
+    d_start = date.fromisoformat(start_date)
+    d_end = date.fromisoformat(end_date)
+
+    archive_range = (start_date, min(d_end, cutoff).isoformat()) if d_start <= cutoff else None
+    forecast_start = max(d_start, cutoff + timedelta(days=1))
+    forecast_range = (forecast_start.isoformat(), end_date) if d_end > cutoff else None
+    return archive_range, forecast_range
+
+
+def _request_daily(url: str, lat: float, lon: float, start_date: str, end_date: str):
+    """One Open-Meteo call; returns (daily_dict, resolved_coords, error_message)."""
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "start_date": start_date,
+        "end_date": end_date,
+        "daily": ERA5_DAILY_VARS,
+        "timezone": "UTC",
+    }
+    resp = http_client.get(url, params=params)
+    if not resp.ok:
+        try:
+            err = resp.json()
+        except Exception:
+            err = resp.text
+        return None, None, str(err)
+    data = resp.json()
+    resolved = {
+        "latitude": round(data.get("latitude", lat), 4),
+        "longitude": round(data.get("longitude", lon), 4),
+        "elevation_m": data.get("elevation", None),
+    }
+    return data.get("daily", {}), resolved, None
+
+
+def _fetch_daily_for_point(
+    lat: float, lon: float, start_date: str, end_date: str
+) -> tuple[dict | None, dict | None, str, str | None]:
+    """Fetch one point's full daily series across whichever endpoint(s) the
+    date range needs, concatenated in chronological order. Returns
+    (merged_daily, resolved_coords, data_sources_used, error_message).
+    """
+    archive_range, forecast_range = _split_date_range(start_date, end_date)
+    daily_parts: list[dict] = []
+    resolved = None
+    sources: list[str] = []
+
+    if archive_range:
+        daily, resolved, err = _request_daily(CONFIG.archive_api_url, lat, lon, *archive_range)
+        if err:
+            return None, None, "", f"ERA5 archive request failed: {err}"
+        daily_parts.append(daily)
+        sources.append("era5_archive")
+
+    if forecast_range:
+        daily, resolved, err = _request_daily(CONFIG.forecast_api_url, lat, lon, *forecast_range)
+        if err:
+            return None, None, "", f"Open-Meteo forecast request failed: {err}"
+        daily_parts.append(daily)
+        sources.append("forecast_current_and_upcoming")
+
+    if not daily_parts:
+        return None, None, "", "No data source covers the requested date range."
+
+    merged: dict[str, list] = {}
+    for key in daily_parts[0]:
+        merged[key] = [v for part in daily_parts for v in part.get(key, [])]
+
+    return merged, resolved, "+".join(sources), None
+
+
 def fetch_weather_environment(req: WeatherEnvironmentRequest) -> dict:
     points, method, is_centroid = resolve_weather_sampling_points(req)
-    
+
     queried_coords = []
     all_daily_data = []
-    
+    data_sources_used: set[str] = set()
+
     for lat, lon in points:
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "start_date": req.start_date,
-            "end_date": req.end_date,
-            "daily": ERA5_DAILY_VARS,
-            "timezone": "UTC",
-        }
-        resp = http_client.get(CONFIG.archive_api_url, params=params)
-        if not resp.ok:
-            try:
-                err = resp.json()
-            except Exception:
-                err = resp.text
-            return {"status": "error", "error": {"type": "service_error", "message": f"Open-Meteo ERA5 request failed: {err}"}}
-        
-        data = resp.json()
-        queried_coords.append({
-            "latitude": round(data.get("latitude", lat), 4),
-            "longitude": round(data.get("longitude", lon), 4),
-            "elevation_m": data.get("elevation", None),
-        })
-        all_daily_data.append(data.get("daily", {}))
-        
+        daily, resolved, sources_label, err = _fetch_daily_for_point(
+            lat, lon, req.start_date, req.end_date
+        )
+        if err:
+            return {"status": "error", "error": {"type": "service_error", "message": err}}
+
+        queried_coords.append(resolved)
+        all_daily_data.append(daily)
+        data_sources_used.update(sources_label.split("+"))
+
     if not all_daily_data or not all_daily_data[0].get("time"):
         return {"status": "error", "error": {"type": "no_data", "message": "No meteorological data returned for specified range."}}
     
@@ -272,14 +353,29 @@ def fetch_weather_environment(req: WeatherEnvironmentRequest) -> dict:
             "wind_speed_max_kmh": round(float(wind_max[i]), 2),
         })
         
-    # Check operational ERA5 data latency (approx 5 days)
+    # Flag any day that is a genuine forecast (in the future) rather than an
+    # observation, and note when the archive and forecast products were both
+    # used and stitched together (a seam between two products, at worst a
+    # discontinuity right at the join date).
     today_utc = datetime.now(timezone.utc).date()
+    start_date_obj = date.fromisoformat(req.start_date)
     end_date_obj = date.fromisoformat(req.end_date)
+    forecast_range_start = max(start_date_obj, today_utc)
+    forecast_days_count = (
+        max(0, (end_date_obj - forecast_range_start).days + 1) if end_date_obj >= today_utc else 0
+    )
+
     operational_warnings = []
-    if (today_utc - end_date_obj).days < 5:
+    if forecast_days_count > 0:
         operational_warnings.append(
-            "ERA5/ERA5-Land reanalysis products have an operational assimilation latency of ~5 days. "
-            "Observations near or after this threshold may be incomplete, null, or fallback estimates."
+            f"{forecast_days_count} day(s) in this range are today or in the future: those "
+            "values are model forecasts (or a same-day nowcast), not confirmed observations."
+        )
+    if len(data_sources_used) > 1:
+        operational_warnings.append(
+            "This range was served by more than one data product (ERA5 archive and/or the "
+            "forecast API) and the daily series were concatenated -- there may be a small "
+            "discontinuity right at the join date."
         )
 
     return {
@@ -287,6 +383,7 @@ def fetch_weather_environment(req: WeatherEnvironmentRequest) -> dict:
         "source": {
             "provider": "Open-Meteo",
             "dataset": "ERA5 & ERA5-Land Reanalysis",
+            "data_sources_used": sorted(data_sources_used),
             "model_grid_resolution_deg": 0.1,
             "spatial_representativeness": "Meteorological reanalysis grid cell (approx 9-11 km). Not equal to satellite pixel resolution.",
         },

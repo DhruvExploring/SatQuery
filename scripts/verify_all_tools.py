@@ -3,7 +3,7 @@
 ================================================================================
 SATQUERY: ECOSYSTEM INTEGRITY & TOOL DISCOVERY VERIFICATION
 ================================================================================
-File: verify_all_tools.py
+File: scripts/verify_all_tools.py
 Description:
     Verifies that all 8 standardized tools and root engines in the SatQuery
     ecosystem load properly, export their core functions, and register FastMCP.
@@ -15,7 +15,7 @@ import importlib
 from pathlib import Path
 
 # Add current folder to sys.path
-root_dir = Path(__file__).resolve().parent
+root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 

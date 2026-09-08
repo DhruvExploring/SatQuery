@@ -234,7 +234,7 @@ def build():
         P(
             "A senior-to-junior walkthrough of the SatQuery repo: the eight Earth-observation "
             "tools, the LangGraph controller, the FastAPI bridge, and how to test every path "
-            "by hand. Written in English with Hinglish notes so you can explain it in standup.",
+            "by hand.",
             s["cover_sub"],
         )
     )
@@ -242,9 +242,10 @@ def build():
     story.append(Spacer(1, 8))
     story.append(
         P(
-            "<b>Ek line mein:</b> User English bolta hai. FastAPI JSON leta hai. LangGraph sochta hai "
-            "kaunsa tool chalana hai. Tool asli satellite / weather API hit karta hai. Response wapas "
-            "JSON mein aata hai. Tools 5–8 science engines hain, lekin graph mein abhi wired nahi hain.",
+            "<b>In one line:</b> the user writes a request in plain English. FastAPI receives it as "
+            "JSON. LangGraph decides which tool to run. The tool hits the real satellite/weather "
+            "API. The response comes back as JSON. Tools 5–8 are science engines that already "
+            "exist, but they are not wired into the graph yet.",
             s["hi"],
         )
     )
@@ -253,11 +254,12 @@ def build():
     story.append(P("1. Picture this like a restaurant", s["h1"]))
     story.append(
         P(
-            "Agar SatQuery ko ek restaurant samjho, to confusion khatam ho jaati hai. "
+            "Thinking of SatQuery as a restaurant removes most of the confusion. "
             "The waiter is FastAPI. The head chef (planner) reads the order and decides "
-            "<i>kya banana hai</i>. The line cooks are Tools 1–8. The pass (respond node) "
+            "<i>what to cook</i>. The line cooks are Tools 1–8. The pass (respond node) "
             "plates a short English sentence plus the raw kitchen tickets (tool_results). "
-            "The dining room never walks into the kitchen — HTTP layer satellite math nahi karti.",
+            "The dining room never walks into the kitchen — the HTTP layer never does "
+            "satellite math itself.",
             s["body"],
         )
     )
@@ -268,8 +270,8 @@ def build():
             "pull ERA5 weather, compute NDVI, check GeoTIFF alignment, detect change, and "
             "profile landcover/terrain. Product B is the Week-1 orchestration layer: a LangGraph "
             "state machine + FastAPI that currently knows how to plan and run only Tools 1–4. "
-            "Junior galti yeh hai ki README padh ke sochte hain graph already 8 tools chalata hai. "
-            "Nahi. Graph abhi fetch layer tak limited hai.",
+            "The common junior mistake is reading the README and assuming the graph already "
+            "runs all 8 tools. It does not — the graph is currently limited to the fetch layer.",
             s["body"],
         )
     )
@@ -323,62 +325,64 @@ def build():
     story.append(P("2.1 The eight scientific tools", s["h2"]))
     story.append(
         P(
-            "Yeh tools independent micro-engines hain. Har tool ka apna folder, Pydantic request "
-            "model, sample_input.json, aur README hai. Orchestrator inhe import karke call karta "
-            "hai — copy-paste nahi karta.",
+            "These tools are independent micro-engines. Each one has its own folder, Pydantic "
+            "request model, sample_input.json, and README. The orchestrator imports and calls "
+            "them — it never copy-pastes their logic.",
             s["hi"],
         )
     )
     story.append(
         table(
-            ["Tool", "English job", "Hinglish intuition", "Network?"],
+            ["Tool", "Job", "Plain-English intuition", "Network?"],
             [
                 [
                     "1 Optical",
                     "Sentinel-2 true-color RGB GeoTIFF + AOI cloud QA (SCL).",
-                    "Aankh se dikhne wali photo. Agar clouds zyada, SAR suggest karta hai.",
+                    "The photo you'd recognize by eye. Recommends a SAR fallback when cloud "
+                    "cover is too high.",
                     "Sentinel Hub",
                 ],
                 [
                     "2 Multispectral",
                     "Calibrated surface-reflectance bands (B02–B12 etc.).",
-                    "NDVI / NBR ke liye raw ingredients. RGB nahi, science bands.",
+                    "Raw ingredients for NDVI / NBR — science bands, not a viewable RGB image.",
                     "Sentinel Hub",
                 ],
                 [
                     "3 SAR",
                     "Sentinel-1 C-band radar in decibels, cloud-penetrating.",
-                    "Baadalon ke peeche dekhne wala radar. Flood / monsoon ke liye.",
+                    "Radar that sees through clouds. Used for flood / monsoon monitoring.",
                     "Sentinel Hub",
                 ],
                 [
                     "4 Weather",
                     "ERA5 / Open-Meteo temperature, rain, soil moisture, ET0.",
-                    "Satellite ke saath mausam ka context. Drought formally prove nahi karta.",
+                    "Weather context alongside the satellite data. Does not formally prove "
+                    "drought.",
                     "Open-Meteo (no key)",
                 ],
                 [
                     "5 Indices",
                     "NDVI, EVI, NBR, NDMI… on a local GeoTIFF.",
-                    "Bands se formula nikaalna. Download nahi, hisaab.",
+                    "Turns spectral bands into formulas. Pure computation, no download.",
                     "Offline",
                 ],
                 [
                     "6 Inspect",
                     "CRS, transform, NoData, pair alignment (rtol 1e-5).",
-                    "Do rasters ko jodne se pehle QA. Galat grid = galat math.",
+                    "QA before combining two rasters. A mismatched grid means invalid math.",
                     "Offline",
                 ],
                 [
                     "7 Change",
                     "T2 − T1 difference raster + integer change_mask.tif.",
-                    "Pehle vs baad. Loss / stable / gain mask banata hai.",
+                    "Before vs. after. Produces a loss / stable / gain mask.",
                     "Offline",
                 ],
                 [
                     "8 LULC / terrain",
                     "WorldCover patches, DEM slope, zonal cross-tab of the mask.",
-                    "Change kis landcover aur kitni dhalan par hua — yeh jawab.",
+                    "Answers which land-cover class and slope the change actually occurred on.",
                     "Offline",
                 ],
             ],
@@ -391,7 +395,7 @@ def build():
             "Tool 7 → Tool 8 handshake: Tool 7 emits change_mask.tif. Tool 8 takes that path as "
             "zone_mask_path and asks: of the pixels that changed, how many were forest vs cropland, "
             "and on what slope? Continuous math (floats) and categorical GIS (integer class codes) "
-            "isliye alag tools hain — mix mat karna.",
+            "are kept as separate tools for exactly this reason — do not mix them.",
             s["body"],
         )
     )
@@ -418,7 +422,7 @@ def build():
                 ],
                 [
                     "backend/config/settings.py",
-                    "Dates, CRS, mock-planner flag, LLM provider/model/key.",
+                    "Dates, CRS, orchestrator/vision-tool provider, model, and key.",
                     "Per-request logic.",
                 ],
                 [
@@ -460,16 +464,18 @@ def build():
     story.append(
         P(
             "<b>satquery_server.py</b> is a FastMCP server. Claude Desktop (or any MCP client) "
-            "can call all eight tools over JSON-RPC stdio. Yeh orchestrator nahi hai — yeh "
-            "seedha tool functions ko wrap karta hai. Agent khud sochta hai kaunsa tool kab.",
+            "can call all eight tools over JSON-RPC stdio. This is not an orchestrator — it "
+            "wraps the tool functions directly. The calling agent decides which tool to use "
+            "and when.",
             s["body"],
         )
     )
     story.append(
         P(
-            "<b>satquery_workflows.py</b> hard-coded scientific pipelines hain, LangGraph nahi: "
+            "<b>satquery_workflows.py</b> holds hard-coded scientific pipelines, not LangGraph: "
             "Pipeline A wildfire (2→5→6→7→8), Pipeline B flood (3→6→7→4→8), Pipeline C drought "
-            "(2→5 + 4). Demo / SIH science story yahan se aati hai. Week-1 graph inhe invoke nahi karta.",
+            "(2→5 + 4). This is where the demo/science narrative comes from. The Week-1 graph "
+            "does not invoke these directly.",
             s["body"],
         )
     )
@@ -478,33 +484,36 @@ def build():
     story.append(P("3. The clipboard: SatQueryState", s["h1"]))
     story.append(
         P(
-            "LangGraph mein har request ek shared dict hai. Nodes poori state return nahi karte — "
-            "sirf jo field badalni hai. tool_results aur errors par Annotated[..., add] laga hai, "
-            "matlab naya list purane ke upar append hota hai, overwrite nahi.",
+            "Every request in LangGraph is a shared dict. Nodes don't return the whole state — "
+            "only the fields that changed. tool_results and errors are annotated with "
+            "Annotated[..., add], meaning each new list is appended onto the previous one, "
+            "never overwritten.",
             s["hi"],
         )
     )
     story.append(
         P(
-            "Input side (client bhejta hai): query, optional bbox [min_lon, min_lat, max_lon, max_lat], "
-            "optional latitude/longitude (weather), start_date / end_date, bands, max_cloud_cover, "
-            "width/height, SAR polarization / orbit / scene_selection.",
+            "Input side (what the client sends): query, optional bbox [min_lon, min_lat, max_lon, "
+            "max_lat], optional latitude/longitude (weather), start_date / end_date, bands, "
+            "max_cloud_cover, width/height, SAR polarization / orbit / scene_selection.",
             s["body"],
         )
     )
     story.append(
         P(
-            "Working side (graph bharata hai): plan {action, tool, args, reason}, tool_results "
-            "[{tool, result}], errors [], final_answer, status. empty_state() defaults: "
-            "cloud 30%, 512×512, CRS EPSG:4326, dates 2025-01-01 → 2025-01-31 if omitted.",
+            "Working side (what the graph fills in): plan {action, tool, args, reason}, "
+            "tool_results [{tool, result}], errors [], final_answer, status. empty_state() "
+            "defaults: cloud 30%, 512×512, CRS EPSG:4326, dates 2025-01-01 → 2025-01-31 if "
+            "omitted.",
             s["body"],
         )
     )
     story.append(
         P(
-            "<b>Important junior trap:</b> bbox API body mein alag field hai, query string ke andar "
-            "nahi. Agar user bole 'Delhi ki imagery lao' lekin JSON mein bbox na ho, planner "
-            "clarify karega. LLM city name se bbox nahi nikaalta Week-1 mein.",
+            "<b>Common junior mistake:</b> bbox is a separate field in the API body, not part "
+            "of the query string. If a user writes 'get me imagery for Delhi' but the JSON has "
+            "no bbox, the planner will ask for clarification — the LLM does not geocode a city "
+            "name into a bbox in Week-1.",
             s["note"],
         )
     )
@@ -522,11 +531,11 @@ def build():
     story.append(P("Step 0 — FastAPI waiter", s["h2"]))
     story.append(
         P(
-            "uvicorn backend.main:app. Lifespan pehle hi satquery_graph compile kar chuka hai. "
-            "run_query() QueryRequest ko empty_state(...) mein daalta hai aur satquery_graph.invoke(state) "
-            "chalaata hai. Exception → HTTP 500. Normal planner/tool failures HTTP 200 rehte hain "
-            "with status='error' or 'clarify' in the body. Yeh jaan-bujh kar hai: agent protocol "
-            "hai, CRUD nahi.",
+            "uvicorn backend.main:app. The lifespan hook has already compiled satquery_graph "
+            "before the first request. run_query() puts the QueryRequest into empty_state(...) "
+            "and runs satquery_graph.invoke(state). An unhandled exception → HTTP 500. Normal "
+            "planner/tool failures stay HTTP 200, with status='error' or 'clarify' in the body. "
+            "That's intentional: this is an agent protocol, not CRUD.",
             s["body"],
         )
     )
@@ -535,10 +544,10 @@ def build():
     story.append(
         bullets(
             [
-                "Empty query → error (Pydantic pehle hi 422 de sakta hai agar query '').",
+                "Empty query → error (Pydantic can already return 422 if query is '').",
                 "bbox must be 4 numbers, lon ∈ [-180,180], lat ∈ [-90,90], min &lt; max.",
                 "latitude / longitude same range checks if present.",
-                "Yeh node tool nahi chalaata. Sirf errors list bhar'ta hai.",
+                "This node never runs a tool. It only populates the errors list.",
             ],
             s,
         )
@@ -547,11 +556,11 @@ def build():
     story.append(P("Step 2 — plan node", s["h2"]))
     story.append(
         P(
-            "plan node sirf make_plan(state) call karta hai. SATQUERY_MOCK_PLANNER=true ho to "
-            "keyword planner. false ho to Groq (openai-compatible ChatOpenAI, model llama-3.3-70b-versatile "
-            "in the checked-in .env.example pattern) structured JSON return karta hai. LLM fail "
-            "hua to warning + keyword fallback. Planner tools execute nahi karta — kitchen ticket "
-            "likhta hai.",
+            "The plan node only calls make_plan(state). When SATQUERY_ORCHESTRATOR_PROVIDER=mock, "
+            "that's the keyword planner. When it's openai or anthropic, ChatOpenAI/ChatAnthropic "
+            "(model SATQUERY_ORCHESTRATOR_MODEL, e.g. gpt-5.2) returns structured JSON instead. "
+            "If the LLM call fails, it logs a warning and falls back to the keyword planner. The "
+            "planner never executes tools itself — it just writes the kitchen ticket.",
             s["body"],
         )
     )
@@ -589,9 +598,9 @@ def build():
     story.append(Spacer(1, 4))
     story.append(
         P(
-            "Live LLM planner ko same four actions return karni hoti hain. Agar action=call_tool "
-            "ho aur args empty hon, _default_args_for_tool state se bbox/dates bhar deta hai. "
-            "Temperature 0 hai — planner creative essay nahi likhega.",
+            "The live LLM planner has to return the same four actions. If action=call_tool "
+            "and args come back empty, trusted_args_for_tool fills bbox/dates in from state. "
+            "Temperature is 0 — the planner won't write a creative essay.",
             s["body"],
         )
     )
@@ -599,10 +608,10 @@ def build():
     story.append(P("Step 3 — router (not a node)", s["h2"]))
     story.append(
         P(
-            "route_after_plan ek function hai, graph node nahi. add_conditional_edges ke saath "
-            "laga hai. Rule bilkul chhota hai: agar plan.action == 'call_tool' AND plan.tool "
-            "truthy → 'execute', warna 'respond'. Clarify, chat, respond_error, missing tool — "
-            "sab execute skip karke seedha respond.",
+            "route_after_plan is a plain function, not a graph node — it's attached via "
+            "add_conditional_edges. The rule is small: if plan.action == 'call_tool' AND "
+            "plan.tool is truthy → 'execute', otherwise 'respond'. clarify, chat, "
+            "respond_error, and a missing tool all skip execute and go straight to respond.",
             s["body"],
         )
     )
@@ -610,18 +619,19 @@ def build():
     story.append(P("Step 4 — execute node", s["h2"]))
     story.append(
         P(
-            "Safety check: plan call_tool na ho to error. Phir execute_tool(tool_name, args). "
-            "Executor Pydantic request banata hai (OpticalSatelliteRequest etc.) aur asli "
-            "fetch_* function call karta hai. ValueError → validation_error, ImportError → "
-            "import_error (usually wrong cwd), baaki → service_error. Unknown name → unknown_tool.",
+            "Safety check first: if the plan isn't call_tool, return an error. Otherwise "
+            "execute_tool(tool_name, args) runs. The executor builds a Pydantic request "
+            "(OpticalSatelliteRequest etc.) and calls the real fetch_* function. ValueError → "
+            "validation_error, ImportError → import_error (usually a wrong working directory), "
+            "anything else → service_error. An unknown tool name → unknown_tool.",
             s["body"],
         )
     )
     story.append(
         P(
-            "<b>Production mein mock tools nahi hain.</b> SATQUERY_MOCK_TOOLS flag hata diya gaya. "
-            "Live server hamesha Sentinel / Open-Meteo hit karega. pytest hi conftest.py mein "
-            "execute_tool ko stub karta hai taaki CI quota na khaaye.",
+            "<b>Production never uses mock tools.</b> The live server always hits Sentinel / "
+            "Open-Meteo. Only pytest, via conftest.py, stubs execute_tool so CI never burns "
+            "quota.",
             s["note"],
         )
     )
@@ -645,9 +655,9 @@ def build():
     story.append(Spacer(1, 6))
     story.append(
         P(
-            "HTTP response hamesha { status, final_answer, plan, tool_results, errors } bhejti hai. "
-            "Frontend ko raw tool JSON milta hai, sirf sentence nahi — debugging ke liye plan.reason "
-            "padhna junior ka pehla habit hona chahiye.",
+            "The HTTP response always sends { status, final_answer, plan, tool_results, errors }. "
+            "The frontend gets the raw tool JSON, not just a sentence — reading plan.reason "
+            "should be the first debugging habit a junior engineer builds.",
             s["body"],
         )
     )
@@ -696,17 +706,19 @@ def build():
         P(
             "Copy .env.example → .env. Tools 1–3 need SENTINEL_CLIENT_ID and SENTINEL_CLIENT_SECRET "
             "(Copernicus Data Space / Sentinel Hub). Tool 4 needs nothing. Tools 5–8 need nothing. "
-            "Planner: SATQUERY_MOCK_PLANNER=true for keywords; false plus SATQUERY_LLM_* for Groq "
-            "or OpenAI. Secrets is PDF mein nahi likhe — .env kabhi commit mat karna.",
+            "Planner: SATQUERY_ORCHESTRATOR_PROVIDER=mock for keywords; openai or anthropic plus "
+            "SATQUERY_ORCHESTRATOR_MODEL / _API_KEY for a live LLM. Secrets are never written into "
+            "this PDF — never commit your .env file.",
             s["body"],
         )
     )
     story.append(
         P(
-            "Checked-in defaults in settings.py: mock planner True if env missing, dates Jan 2025, "
-            "cloud 30%, 512 px, EPSG:4326. Tumhare local .env mein mock planner false ho sakta hai "
-            "— isliye same curl Groq vs keyword alag tool choose kar sakta hai. Test karte waqt "
-            "plan.tool hamesha verify karo.",
+            "Checked-in defaults in settings.py: orchestrator provider defaults to mock if the "
+            "env var is missing, dates default to Jan 2025, cloud 30%, 512 px, EPSG:4326. Your "
+            "local .env might have a live provider enabled instead — so the same curl request "
+            "could pick a different tool than the keyword planner would. Always verify plan.tool "
+            "when testing.",
             s["hi"],
         )
     )
@@ -715,8 +727,9 @@ def build():
     story.append(P("7. How to test everything by hand", s["h1"]))
     story.append(
         P(
-            "Teen alag ladders hain. Unhe mix mat karo, warna 'API fail hui' vs 'Sentinel quota' "
-            "vs 'planner ne galat tool chuna' confuse ho jaayega.",
+            "There are three separate test ladders below. Don't mix them, or you'll confuse "
+            "'the API failed' with 'Sentinel quota exhausted' with 'the planner picked the "
+            "wrong tool'.",
             s["hi"],
         )
     )
@@ -733,10 +746,10 @@ def build():
     )
     story.append(
         P(
-            "conftest.py SATQUERY_MOCK_PLANNER=true force karta hai, make_plan ko _keyword_plan "
-            "se replace karta hai, aur execute_tool ko fake success JSON deta hai (scene_id "
-            "S2_OPTICAL_MOCK etc.). Isliye pytest green hona ka matlab hai: graph wiring + "
-            "routing + HTTP shapes sahi hain. Sentinel ka matlab nahi.",
+            "conftest.py forces SATQUERY_ORCHESTRATOR_PROVIDER=mock, replaces make_plan with "
+            "_keyword_plan, and makes execute_tool return fake success JSON (scene_id "
+            "S2_OPTICAL_MOCK etc.). So a green pytest run means: graph wiring, routing, and HTTP "
+            "shapes are correct — it does not mean Sentinel actually works.",
             s["body"],
         )
     )
@@ -757,8 +770,8 @@ def build():
     story.append(P("Ladder B — live FastAPI (real Tools 1–4)", s["h2"]))
     story.append(
         P(
-            "Terminal 1 — server. Project root SatQuery/ hona zaroori hai taaki Tool_* imports "
-            "milen.",
+            "Terminal 1 — server. The working directory must be the SatQuery/ project root so "
+            "the Tool_* imports resolve.",
             s["body"],
         )
     )
@@ -771,8 +784,8 @@ def build():
     )
     story.append(
         P(
-            "Browser: http://127.0.0.1:8000/docs  (Swagger — sabse aasan manual UI). "
-            "http://127.0.0.1:8000/redoc bhi hai. Health: http://127.0.0.1:8000/health",
+            "Browser: http://127.0.0.1:8000/docs (Swagger — the easiest manual UI). "
+            "http://127.0.0.1:8000/redoc is also available. Health: http://127.0.0.1:8000/health",
             s["body"],
         )
     )
@@ -795,8 +808,8 @@ def build():
     )
     story.append(
         P(
-            "Expect status=clarify, tool_results=[], final_answer location maange. Agar yahan "
-            "bhi tool chal pada, planner bbox check toot gaya.",
+            "Expect status=clarify, tool_results=[], and final_answer asking for a location. "
+            "If a tool actually runs here, the planner's bbox check is broken.",
             s["body"],
         )
     )
@@ -829,7 +842,7 @@ def build():
             s["code"],
         )
     )
-    story.append(P("Expect HTTP 422 Unprocessable Entity. Graph tak baat nahi jaati.", s["body"]))
+    story.append(P("Expect HTTP 422 Unprocessable Entity. The request never reaches the graph.", s["body"]))
 
     story.append(P("B5. Live optical (Tool 1) — Sentinel Hub, ~5–20 s", s["h2"]))
     story.append(
@@ -858,9 +871,10 @@ def build():
     story.append(P("B6. Live multispectral (Tool 2)", s["h2"]))
     story.append(
         P(
-            "Same bbox/dates, query mein 'multispectral' ya 'NDVI' likho. Keyword planner "
-            "optical se pehle multi match karega. Expect plan.tool=fetch_multispectral_imagery. "
-            "Optional: \"bands\": [\"B02\",\"B03\",\"B04\",\"B08\"].",
+            "Same bbox/dates, but write 'multispectral' or 'NDVI' in the query. The keyword "
+            "planner matches multispectral before optical. Expect "
+            "plan.tool=fetch_multispectral_imagery. Optional: "
+            "\"bands\": [\"B02\",\"B03\",\"B04\",\"B08\"].",
             s["body"],
         )
     )
@@ -869,8 +883,8 @@ def build():
     story.append(
         P(
             "Query: 'Download SAR radar imagery for Mumbai' with bbox [72.8, 18.9, 73.0, 19.1]. "
-            "Optional polarization [\"VV\",\"VH\"], orbit_direction BOTH. Clouds irrelevant — "
-            "radar hai. File FLOAT32 dB GeoTIFF hona chahiye.",
+            "Optional polarization [\"VV\",\"VH\"], orbit_direction BOTH. Cloud cover is "
+            "irrelevant — it's radar. The output file should be a FLOAT32 dB GeoTIFF.",
             s["body"],
         )
     )
@@ -890,8 +904,9 @@ def build():
     )
     story.append(
         P(
-            "Bbox de ke bhi chalega. Sentinel credentials is test ke liye zaroori nahi. "
-            "Expect observed_metrics.temperature_2m_mean_c and precipitation_sum_mm in tool_results.",
+            "Passing a bbox instead of lat/lon also works. Sentinel credentials are not needed "
+            "for this test. Expect observed_metrics.temperature_2m_mean_c and "
+            "precipitation_sum_mm in tool_results.",
             s["body"],
         )
     )
@@ -905,8 +920,9 @@ def build():
     )
     story.append(
         P(
-            "Yeh FastAPI skip karke seedha satquery_graph.invoke karta hai. Agar demo chal jaye "
-            "aur /query fail ho, problem HTTP layer mein hai. Ulta ho to routing vs uvicorn cwd.",
+            "This skips FastAPI entirely and calls satquery_graph.invoke directly. If the demo "
+            "works but /query fails, the problem is in the HTTP layer. If it's the other way "
+            "around, look at routing vs. the uvicorn working directory.",
             s["body"],
         )
     )
@@ -914,27 +930,28 @@ def build():
     story.append(P("Ladder C — scientific tools outside the graph", s["h2"]))
     story.append(
         P(
-            "Tools 5–8 FastAPI se nahi chalte. Unhe folder ke sample JSON, notebooks, "
-            "ya phase runners se test karo.",
+            "Tools 5–8 don't run through FastAPI. Test them via each folder's sample JSON, "
+            "notebooks, or the phase runner scripts.",
             s["body"],
         )
     )
     story.append(
         Preformatted(
             "cd D:\\downloads\\satquery\\SatQuery\n"
-            "python run_phase2.py\n"
+            "python scripts/run_phase2.py\n"
             "# offline synthetic harness + Pipelines A/B/C\n"
-            "python test_phase2_integration.py\n"
-            "python verify_all_tools.py",
+            "python scripts/test_phase2_integration.py\n"
+            "python scripts/verify_all_tools.py",
             s["code"],
         )
     )
     story.append(
         P(
-            "Per-tool: har Tool_N folder mein sample_input.json → function → sample_output.json "
-            "shape. Live fetch ke baad Tool 5 ko downloaded multispectral path do, Tool 6 se "
-            "alignment check, do dates ke indices par Tool 7, mask + LULC/DEM par Tool 8. "
-            "Yeh end-to-end science path hai; Week-1 /query is chain ko automatically nahi chalaata.",
+            "Per-tool pattern: each Tool_N folder goes sample_input.json → function → "
+            "sample_output.json shape. After a live fetch, feed Tool 5 the downloaded "
+            "multispectral path, check alignment with Tool 6, run Tool 7 on the indices from "
+            "two dates, then Tool 8 on the mask plus LULC/DEM. This is the full end-to-end "
+            "science path — the Week-1 /query endpoint does not chain it automatically.",
             s["body"],
         )
     )
@@ -945,9 +962,9 @@ def build():
     )
     story.append(
         P(
-            "stdio MCP process. Claude Desktop config mein command/args/env. Manual test: MCP "
-            "inspector ya Claude se 'fetch optical for this bbox' bolo. Yeh graph ke parallel "
-            "door hai, replacement nahi.",
+            "A stdio MCP process. Configure command/args/env in the Claude Desktop config. "
+            "Manual test: use the MCP inspector, or ask Claude to 'fetch optical for this "
+            "bbox'. This is a door parallel to the graph, not a replacement for it.",
             s["body"],
         )
     )
@@ -955,7 +972,7 @@ def build():
     story.append(P("PowerShell note (Windows)", s["h2"]))
     story.append(
         P(
-            "PowerShell mein curl alias hota hai Invoke-WebRequest ke liye. Safe recipe:",
+            "PowerShell aliases curl to Invoke-WebRequest. Use this recipe instead:",
             s["body"],
         )
     )
@@ -1024,7 +1041,8 @@ def build():
                 [
                     "Wrong tool (optical instead of SAR)",
                     "Keyword order / LLM drift",
-                    "plan.reason. Set MOCK_PLANNER true to lock keywords.",
+                    "plan.reason. Set SATQUERY_ORCHESTRATOR_PROVIDER=mock to lock in keyword "
+                    "routing.",
                 ],
                 [
                     "import_error in tool_results",
@@ -1059,19 +1077,21 @@ def build():
     story.append(P("10. Mental model to remember tomorrow", s["h1"]))
     story.append(
         P(
-            "1) User intent string hai, geometry alag field hai. 2) Planner sochta hai, executor "
-            "chalaata hai, respond bolta hai. 3) Router sirf haan/na execute. 4) Ek request, "
-            "ek tool — koi loop nahi Week-1 mein. 5) Science ke 8 engines already exist; "
-            "controller abhi pehle 4 fetch tools ka waiter hai. 6) Test three ways: pytest "
-            "(brain), curl/Swagger (brain + hands + network), run_phase2 (science kitchen).",
+            "1) User intent is a string; geometry is a separate field. 2) The planner decides, "
+            "the executor runs, respond speaks. 3) The router is just a yes/no on whether to "
+            "execute. 4) One request, one tool — there is no loop in Week-1. 5) The 8 science "
+            "engines already exist; the controller is currently just a waiter for the first 4 "
+            "fetch tools. 6) Test three ways: pytest (the brain), curl/Swagger (brain + hands + "
+            "network), run_phase2 (the science kitchen).",
             s["body"],
         )
     )
     story.append(
         P(
-            "Jab koi poochhe 'orchestration kahan hai?' — jawab: backend/orchestrator/graph.py "
-            "wiring hai, nodes.py behaviour hai, llm.py decision hai, executor.py haath hai, "
-            "query.py doorbell hai. Utna yaad raha to tum junior nahi, us system ke owner ho.",
+            "When someone asks 'where is the orchestration?' — the answer is: "
+            "backend/orchestrator/graph.py is the wiring, nodes.py is the behavior, llm.py is "
+            "the decision-making, executor.py is the hands, and query.py is the doorbell. "
+            "Remember that much, and you own the system instead of just visiting it.",
             s["hi"],
         )
     )

@@ -144,21 +144,82 @@ def build_plan_update(
     agenda = list(state.get("agenda") or [])
     if agenda:
         idx = int(state.get("agenda_index") or 0)
-        if state.get("handshake_complete") or idx >= len(agenda):
+        if not state.get("handshake_complete") and idx < len(agenda):
+            return {"plan": plan_agenda_step(state, agenda[idx])}
+
+        if state.get("intent") == "single_tool" and not state.get("handshake_complete"):
+            # A fixed-length agenda doesn't apply to single_tool queries the
+            # way it does to missions/chains: the model may decide, now that
+            # it can see everything gathered so far, that it needs one more
+            # tool before it can answer confidently. Consult it again instead
+            # of stopping just because the current agenda ran out.
+            planned = single_tool_planner(state)
+            if planned.get("action") == "call_tool" and planned.get("tool"):
+                new_step: AgendaStep = {
+                    "tool": planned["tool"],
+                    "role": "single",
+                    "reason": planned.get("reason") or "",
+                }
+                agenda.append(new_step)
+                return {
+                    "agenda": agenda,
+                    "agenda_index": idx,
+                    "handshake_complete": False,
+                    "plan": plan_agenda_step(state, new_step),
+                }
             return {
-                "plan": {
-                    "action": "chat",
-                    "tool": None,
-                    "args": {},
-                    "reason": "Handshake already complete.",
-                },
+                "agenda": agenda,
+                "agenda_index": idx,
                 "handshake_complete": True,
+                "plan": planned,
             }
-        return {"plan": plan_agenda_step(state, agenda[idx])}
+
+        return {
+            "plan": {
+                "action": "chat",
+                "tool": None,
+                "args": {},
+                "reason": "Handshake already complete.",
+            },
+            "handshake_complete": True,
+        }
 
     intent, steps, clarify = build_agenda(state)
     if intent == "single_tool":
         planned = single_tool_planner(state)
+
+        if (
+            planned.get("action") == "clarify"
+            and planned.get("tool") in _FETCH_ANY
+            and not state.get("bbox")
+            and state.get("input_file")
+        ):
+            # A fetch tool is only blocked on a bbox, and an uploaded file is
+            # already on hand — derive the AOI from that file's own
+            # geospatial bounds instead of asking the user to re-supply a
+            # location the data already encodes. Chains inspect_geotiff_
+            # metadata (role=bbox_extract) into the originally intended fetch.
+            fetch_tool = planned["tool"]
+            bbox_chain_steps: list[AgendaStep] = [
+                {
+                    "tool": "inspect_geotiff_metadata",
+                    "role": "bbox_extract",
+                    "reason": "Deriving the fetch AOI from the uploaded file's own geospatial bounds.",
+                },
+                {
+                    "tool": fetch_tool,
+                    "role": "single",
+                    "reason": f"Fetch {fetch_tool} using the AOI derived from the uploaded file.",
+                },
+            ]
+            return {
+                "intent": "chain_bbox_from_file",
+                "agenda": bbox_chain_steps,
+                "agenda_index": 0,
+                "handshake_complete": False,
+                "plan": plan_agenda_step(state, bbox_chain_steps[0]),
+            }
+
         wrapped: list[AgendaStep] = []
         if planned.get("action") == "call_tool" and planned.get("tool"):
             wrapped = [{
@@ -219,7 +280,10 @@ def plan_agenda_step(state: SatQueryState, step: AgendaStep) -> Plan:
         overlay["end_date"] = state.get("post_end_date")
     if tool == "compute_vegetation_indices":
         overlay["input_file"] = _indices_source_path(state, step.get("role"))
-    if tool == "inspect_geotiff_metadata":
+    if tool == "inspect_geotiff_metadata" and step.get("role") == "qa":
+        # Only the chain_temporal pre-flight gate wants Tool 6 pointed at the
+        # T2 raster with T1 as compare_with — other uses (e.g. bbox_extract)
+        # must keep whatever input_file the caller/state already set.
         overlay["input_file"] = (
             state.get("index_after_path") or state.get("raster_after_path")
         )
@@ -257,6 +321,26 @@ def plan_agenda_step(state: SatQueryState, step: AgendaStep) -> Plan:
     }
 
 
+def derive_grounding_fields(metadata_result: dict[str, Any]) -> dict[str, Any]:
+    """Every SatQueryState field any downstream tool's location/trusted-args
+    logic can legitimately derive from a single GeoTIFF's own
+    inspect_geotiff_metadata output: its real-world bounding box and centroid.
+
+    This is deliberately narrow. Tool 6 describes the one file it was pointed
+    at -- it has no way to supply another tool's *other* required inputs
+    (a second raster's path, a LULC/DEM file, date windows, thresholds), so
+    those are left for the user or an earlier step to provide.
+    """
+    bounds = (metadata_result.get("spatial") or {}).get("bounds_wgs84")
+    if not bounds:
+        return {}
+    return {
+        "bbox": [bounds["min_lon"], bounds["min_lat"], bounds["max_lon"], bounds["max_lat"]],
+        "latitude": (bounds["min_lat"] + bounds["max_lat"]) / 2.0,
+        "longitude": (bounds["min_lon"] + bounds["max_lon"]) / 2.0,
+    }
+
+
 def apply_advance(state: SatQueryState) -> dict[str, Any]:
     """Record artifacts, gate Tool 6, optionally append Tool 1→3, then step the agenda."""
     hops = int(state.get("handshake_hops") or 0) + 1
@@ -277,7 +361,18 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
     role = step.get("role") or ""
 
     if result.get("status") != "success":
-        update["handshake_complete"] = True
+        if state.get("intent") == "single_tool":
+            # Don't just give up -- the failure (often a specific, useful
+            # diagnostic, e.g. Tool 7's grid-misalignment message) will be in
+            # tool_results when build_plan_update re-consults the planner,
+            # which can then choose a genuinely different tool instead of
+            # repeating the same failing call. idx must advance past this
+            # step so that re-consult actually happens instead of retrying
+            # the identical step.
+            update["agenda_index"] = idx + 1
+            update["handshake_complete"] = False
+        else:
+            update["handshake_complete"] = True
         return update
 
     path = _result_file_path(result)
@@ -306,6 +401,18 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
             True,
         )
         if ready is False:
+            if state.get("intent") == "single_tool":
+                # The compatibility finding is already recorded in
+                # tool_results; let the continuation planner see it and pick
+                # a genuinely different tool (e.g. compare_images_visually)
+                # instead of hard-stopping. Unlike the deterministic
+                # chain_temporal agenda, a single_tool query that checked
+                # alignment first isn't committed to Tool 7 because of it --
+                # don't set state.errors, which is an unconditional
+                # give-up signal for both routing and the final response.
+                update["agenda_index"] = idx + 1
+                update["handshake_complete"] = False
+                return update
             update["errors"] = [
                 "Tool 6 compatibility.pixelwise_operation_ready is false; "
                 "skipping temporal change."
@@ -313,6 +420,22 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
             update["handshake_complete"] = True
             update["agenda_index"] = idx + 1
             return update
+
+        grounding = derive_grounding_fields(result)
+        if role == "bbox_extract" and not grounding:
+            update["errors"] = [
+                "Could not derive a fetch location from the uploaded file "
+                "(no usable geospatial bounds — the file may lack a CRS)."
+            ]
+            update["handshake_complete"] = True
+            return update
+        # Any successful inspection reveals the file's real location -- make
+        # it available to whatever tool gets picked next (e.g.
+        # fetch_weather_environment or fetch_sar_imagery) instead of
+        # requiring a dedicated bbox_extract step or another clarify round.
+        for field, value in grounding.items():
+            if not state.get(field):
+                update[field] = value
 
     if tool_name in _FETCH_OPTICAL and optical_flags_recommend_sar(result):
         if not any(item.get("tool") in _FETCH_SAR for item in agenda):
@@ -328,7 +451,13 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
     update["agenda_index"] = new_index
     updated_agenda = update.get("agenda", agenda)
     if new_index >= len(updated_agenda):
-        update["handshake_complete"] = True
+        if state.get("intent") == "single_tool":
+            # Don't force-finish yet -- build_plan_update will re-consult the
+            # single_tool planner with this result added to tool_results, and
+            # it decides whether another tool is actually needed.
+            update["handshake_complete"] = False
+        else:
+            update["handshake_complete"] = True
     else:
         update["handshake_complete"] = False
     return update

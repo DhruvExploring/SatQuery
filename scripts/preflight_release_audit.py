@@ -3,10 +3,12 @@
 ================================================================================
 SATQUERY: PRE-FLIGHT SECURITY AUDIT & RELEASE VERIFICATION
 ================================================================================
-File: preflight_release_audit.py
+File: scripts/preflight_release_audit.py
 Description:
     Conducts comprehensive pre-flight security, git hygiene, and functionality
-    audits on the release target directory (Tools_SIH) prior to GitHub publishing.
+    audits on the SatQuery project root prior to publishing. Run with no
+    arguments to audit the repo in place, or pass a path to audit a different
+    checkout.
 ================================================================================
 """
 
@@ -78,10 +80,10 @@ def audit_target_directory(target_dir: Path) -> bool:
     reqs_file = target_dir / "requirements.txt"
     if reqs_file.exists():
         req_content = reqs_file.read_text(encoding="utf-8")
-        required_pkgs = ["requests", "rasterio", "numpy", "scipy", "pydantic", "fastmcp", "python-dotenv"]
+        required_pkgs = ["requests", "rasterio", "numpy", "scipy", "pydantic", "fastmcp", "python-dotenv", "pillow"]
         missing_pkgs = [p for p in required_pkgs if p not in req_content]
         if not missing_pkgs:
-            print("  [PASS] Valid: requirements.txt specifies all 7 core production packages.")
+            print(f"  [PASS] Valid: requirements.txt specifies all {len(required_pkgs)} core production packages.")
         else:
             print(f"  [WARN] requirements.txt missing packages: {missing_pkgs}")
     else:
@@ -260,6 +262,7 @@ def audit_target_directory(target_dir: Path) -> bool:
     return audit_passed
 
 if __name__ == "__main__":
-    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("C:/Users/User/Desktop/Tools_SIH")
+    default_target = Path(__file__).resolve().parent.parent
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else default_target
     success = audit_target_directory(target)
     sys.exit(0 if success else 1)

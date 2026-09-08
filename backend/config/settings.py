@@ -1,7 +1,15 @@
 """Runtime configuration for SatQuery.
 
-Provider selection is controlled by SATQUERY_USE_OPENAI / SATQUERY_USE_CLAUDE.
-Exactly one real provider must be enabled when SATQUERY_MOCK_PLANNER=false.
+Two independent, swappable model roles:
+
+- Orchestrator (SATQUERY_ORCHESTRATOR_*): picks which tool to call next and,
+  when enabled, writes the final narrative answer. mock | openai | anthropic.
+- Vision tool (SATQUERY_VISION_TOOL_*): interprets a rendered image on request,
+  called like any other tool. openai (hosted vision API) | local (talks to
+  local_model_server, which may be serving InternVL-1B or EarthMind-4B).
+
+Neither role auto-fails-over between local and API at runtime — the mode is a
+static deployment choice. See .env.example for the full var list.
 """
 
 from __future__ import annotations
@@ -23,6 +31,12 @@ def _as_bool(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
 
 
+def _as_origin_list(value: str | None) -> list[str]:
+    if value is None or not value.strip():
+        return ["*"]
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     default_start_date: str = "2025-01-01"
@@ -32,86 +46,86 @@ class Settings:
     default_height: int = 512
     default_crs: str = "EPSG:4326"
 
-    use_mock_planner: bool = True
-    use_mock_tools: bool = True
-
     tool_output_dir: str = "sih_satellite_data"
 
     memory_backend: str = "none"
     memory_db_url: str | None = None
     memory_embed_model: str = "openai:text-embedding-3-small"
 
-    # LLM provider toggle — preserve Shrishti's existing architecture.
-    use_openai: bool = False
-    use_claude: bool = False
+    # --- Orchestrator role ---
+    orchestrator_provider: str = "mock"  # mock | openai | anthropic
+    orchestrator_model: str = "gpt-5.2"
+    orchestrator_api_key: str | None = None
+    orchestrator_base_url: str | None = None
+    orchestrator_synthesize_answer: bool = True
 
-    # LLM models
-    openai_model: str = "gpt-5.6"
-    claude_model: str = "claude-sonnet-4-6"
-    openai_base_url: str | None = None
+    # --- Vision tool role ---
+    vision_tool_enabled: bool = False
+    vision_tool_provider: str = "openai"  # openai | local
+    vision_tool_model: str = "gpt-4o-mini"
+    vision_tool_api_key: str | None = None
+    vision_tool_base_url: str | None = None
+    vision_tool_timeout_s: float = 60.0
 
-    # API keys
-    openai_api_key: str | None = None
-    claude_api_key: str | None = None
+    # --- Networking / deployment ---
+    cors_allowed_origins: tuple[str, ...] = ("*",)
+    backend_port: int = 8000
 
 
 def load_settings() -> Settings:
-    use_mock_planner = _as_bool(
-        os.getenv("SATQUERY_MOCK_PLANNER"), True
-    )
-
-    use_openai = _as_bool(
-        os.getenv("SATQUERY_USE_OPENAI"), False
-    )
-
-    use_claude = _as_bool(
-        os.getenv("SATQUERY_USE_CLAUDE"), False
-    )
-
-    # Older .env files used SATQUERY_LLM_PROVIDER instead of USE_OPENAI / USE_CLAUDE.
-    provider = (os.getenv("SATQUERY_LLM_PROVIDER") or "").strip().lower()
-    if not use_openai and not use_claude:
-        if provider in {"openai", "groq"}:
-            use_openai = True
-        elif provider in {"claude", "anthropic"}:
-            use_claude = True
-
-    if not use_mock_planner and use_openai == use_claude:
+    orchestrator_provider = (
+        os.getenv("SATQUERY_ORCHESTRATOR_PROVIDER") or "mock"
+    ).strip().lower()
+    if orchestrator_provider not in {"mock", "openai", "anthropic"}:
         raise ValueError(
-            "Exactly one LLM must be enabled. "
-            "Set SATQUERY_USE_OPENAI=true OR "
-            "SATQUERY_USE_CLAUDE=true, but not both. "
-            "Or set SATQUERY_MOCK_PLANNER=true for the keyword planner."
+            "SATQUERY_ORCHESTRATOR_PROVIDER must be one of: mock, openai, anthropic. "
+            f"Got {orchestrator_provider!r}."
         )
 
+    vision_tool_enabled = _as_bool(os.getenv("SATQUERY_VISION_TOOL_ENABLED"), False)
+    vision_tool_provider = (
+        os.getenv("SATQUERY_VISION_TOOL_PROVIDER") or "openai"
+    ).strip().lower()
+    if vision_tool_enabled and vision_tool_provider not in {"openai", "local"}:
+        raise ValueError(
+            "SATQUERY_VISION_TOOL_PROVIDER must be one of: openai, local. "
+            f"Got {vision_tool_provider!r}."
+        )
+
+    orchestrator_api_key = os.getenv("SATQUERY_ORCHESTRATOR_API_KEY") or None
+    if orchestrator_api_key is None:
+        if orchestrator_provider == "openai":
+            orchestrator_api_key = os.getenv("OPENAI_API_KEY") or None
+        elif orchestrator_provider == "anthropic":
+            orchestrator_api_key = os.getenv("ANTHROPIC_API_KEY") or None
+
+    vision_tool_api_key = os.getenv("SATQUERY_VISION_TOOL_API_KEY") or None
+    if vision_tool_api_key is None and vision_tool_provider == "openai":
+        vision_tool_api_key = os.getenv("OPENAI_API_KEY") or None
+
     return Settings(
-        use_mock_planner=use_mock_planner,
-        use_mock_tools=_as_bool(
-            os.getenv("SATQUERY_MOCK_TOOLS"), True
+        orchestrator_provider=orchestrator_provider,
+        orchestrator_model=os.getenv("SATQUERY_ORCHESTRATOR_MODEL", "gpt-5.2"),
+        orchestrator_api_key=orchestrator_api_key,
+        orchestrator_base_url=os.getenv("SATQUERY_ORCHESTRATOR_BASE_URL") or None,
+        orchestrator_synthesize_answer=_as_bool(
+            os.getenv("SATQUERY_ORCHESTRATOR_SYNTHESIZE_ANSWER"), True
         ),
-        use_openai=use_openai,
-        use_claude=use_claude,
-        openai_model=os.getenv("SATQUERY_OPENAI_MODEL")
-        or os.getenv("SATQUERY_LLM_MODEL")
-        or "gpt-5.6",
-        claude_model=os.getenv(
-            "SATQUERY_CLAUDE_MODEL", "claude-sonnet-4-6"
+        vision_tool_enabled=vision_tool_enabled,
+        vision_tool_provider=vision_tool_provider,
+        vision_tool_model=os.getenv("SATQUERY_VISION_TOOL_MODEL", "gpt-4o-mini"),
+        vision_tool_api_key=vision_tool_api_key,
+        vision_tool_base_url=os.getenv("SATQUERY_VISION_TOOL_BASE_URL") or None,
+        vision_tool_timeout_s=float(
+            os.getenv("SATQUERY_VISION_TOOL_TIMEOUT_S", "60")
         ),
-        openai_base_url=os.getenv("SATQUERY_LLM_BASE_URL")
-        or os.getenv("OPENAI_BASE_URL")
-        or None,
-        openai_api_key=(
-            os.getenv("OPENAI_API_KEY")
-            or os.getenv("SATQUERY_LLM_API_KEY")
-            or None
+        cors_allowed_origins=tuple(
+            _as_origin_list(os.getenv("SATQUERY_CORS_ALLOWED_ORIGINS"))
         ),
-        claude_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
-        memory_backend=os.getenv(
-            "SATQUERY_MEMORY_BACKEND", "none"
-        ),
-        memory_db_url=os.getenv(
-            "SATQUERY_MEMORY_DB_URL"
-        ) or None,
+        backend_port=int(os.getenv("SATQUERY_BACKEND_PORT", "8000")),
+        tool_output_dir=os.getenv("SATQUERY_TOOL_OUTPUT_DIR", "sih_satellite_data"),
+        memory_backend=os.getenv("SATQUERY_MEMORY_BACKEND", "none"),
+        memory_db_url=os.getenv("SATQUERY_MEMORY_DB_URL") or None,
         memory_embed_model=os.getenv(
             "SATQUERY_MEMORY_EMBED_MODEL",
             "openai:text-embedding-3-small",

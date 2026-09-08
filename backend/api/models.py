@@ -363,9 +363,14 @@ class QueryRequest(BaseModel):
         default="absolute",
         description='Tool 7: "absolute" or "statistical".',
     )
-    threshold_value: float = Field(
-        default=0.15,
-        description="Tool 7: absolute delta, or k for μ ± kσ when statistical.",
+    threshold_value: float | None = Field(
+        default=None,
+        description=(
+            "Tool 7: absolute delta, or k for μ ± kσ when statistical. Left "
+            "unset, the backend picks 0.15 for a vegetation-index-style "
+            "raster or 3.0 for SAR backscatter (dB), detected from the file "
+            "names."
+        ),
     )
     relative_change_threshold_percent: float | None = Field(
         default=None,

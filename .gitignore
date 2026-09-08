@@ -3,6 +3,8 @@
 *.env
 .env.local
 .env.*.local
+.env.docker
+local_model_server/.env
 credentials.json
 secrets.yaml
 *.pem
@@ -26,11 +28,24 @@ venv/
 env/
 ENV/
 
+# Node / frontend build output (already tracked in git history as of this
+# writing -- adding these here stops it getting *worse*, doesn't retroactively
+# untrack the existing files; that's a separate cleanup, see PR notes)
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# Local vision-model weights cache (multi-GB, downloaded on demand by
+# local_model_server -- never versioned, and single blobs here exceed
+# GitHub's 100MB per-file limit)
+local_model_server/.hf-cache/
+
 # Temporary generated test & demonstration artifacts
 output_optical/
 output_multispectral/
 output_sar/
 output_indices/
+uploads/
 phase2_test_scratch/
 phase2_demonstrations/
 phase3_agent_outputs/

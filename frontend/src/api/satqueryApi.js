@@ -1,97 +1,42 @@
 /**
  * SatQuery API client.
- * Only talks to GET /health and POST /api/v1/query.
- * Never throws on a QueryResponse-shaped HTTP error — 400 clarify is a
- * normal product state and must be returned to the shared handler.
+ * Talks to GET /health and POST /api/v1/query only — file upload lives in
+ * api/rasters.js next to the other raster-file concerns.
  */
-
-const API_BASE = (typeof window !== 'undefined' && window.location.port && window.location.port !== '8000')
-  ? 'http://localhost:8000'
-  : '';
-
-/** Exact QueryRequest keys from backend/api/models.py — do not rename. */
-const QUERY_REQUEST_KEYS = [
-  'query',
-  'bbox',
-  'latitude',
-  'longitude',
-  'start_date',
-  'end_date',
-  'post_start_date',
-  'post_end_date',
-  'bands',
-  'max_cloud_cover',
-  'width',
-  'height',
-  'polarization',
-  'orbit_direction',
-  'scene_selection',
-  'input_file',
-  'indices',
-  'band_mapping',
-  'calculate_heuristic_classification',
-  'compare_with',
-  'calculate_statistics',
-  'calculate_histogram',
-  'raster_before_path',
-  'raster_after_path',
-  'band_selection',
-  'threshold_type',
-  'threshold_value',
-  'relative_change_threshold_percent',
-  'mask_encoding',
-  'analysis_output_dir',
-  'generate_difference_raster',
-  'generate_change_mask',
-  'lulc_raster_path',
-  'dem_raster_path',
-  'zone_mask_path',
-  'calculate_fragmentation'
-];
-
-function isEmpty(value) {
-  if (value === undefined || value === null) return true;
-  if (typeof value === 'string' && value.trim() === '') return true;
-  if (Array.isArray(value) && value.length === 0) return true;
-  return false;
-}
 
 /**
- * Build a POST /api/v1/query body from a flat fields object.
- * Drops unknown keys (including the invalid `orbit` alias).
+ * Resolution order: the runtime env-config.js injected by the Docker/prod
+ * frontend container (window.__SATQUERY_CONFIG__.API_BASE_URL) > same-origin
+ * (empty string, the production default when nginx/uvicorn serves both) > the
+ * plain `vite dev` convenience guess of a backend on localhost:8000.
  */
-export function buildQueryPayload(fields = {}) {
-  const payload = {};
-  for (const key of QUERY_REQUEST_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(fields, key)) continue;
-    const value = fields[key];
-    if (isEmpty(value)) continue;
-    payload[key] = value;
-  }
-  return payload;
-}
+export const API_BASE = (() => {
+  if (typeof window === 'undefined') return '';
+  const configured = window.__SATQUERY_CONFIG__?.API_BASE_URL;
+  if (configured) return configured;
+  if (window.__SATQUERY_CONFIG__) return ''; // env-config.js loaded, deliberately same-origin
+  if (window.location.port && window.location.port !== '8000') return 'http://localhost:8000';
+  return '';
+})();
 
 export async function checkHealth() {
-  const startTime = performance.now();
   try {
     const res = await fetch(`${API_BASE}/health`, { method: 'GET' });
-    const latency = Math.round(performance.now() - startTime);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return { ok: true, data, latency };
+    return { ok: true };
   } catch (err) {
-    return { ok: false, error: err.message, latency: Math.round(performance.now() - startTime) };
+    return { ok: false, error: err.message };
   }
 }
 
 /**
- * POST /api/v1/query.
- * Returns { httpStatus, body } for every HTTP code, including 400/404/502/500.
- * Network failures return { networkError: true, error }.
+ * POST /api/v1/query with a raw payload matching the backend's QueryRequest
+ * fields directly (query, input_file, raster_before_path, bbox, latitude,
+ * longitude, ...). Returns { httpStatus, body } for every HTTP code,
+ * including 400/404/502/500. Network failures return
+ * { networkError: true, error }.
  */
-export async function runSatelliteQuery(fields) {
-  const payload = buildQueryPayload(fields);
-
+export async function runQuery(payload) {
   let res;
   try {
     res = await fetch(`${API_BASE}/api/v1/query`, {
@@ -100,12 +45,7 @@ export async function runSatelliteQuery(fields) {
       body: JSON.stringify(payload)
     });
   } catch (err) {
-    return {
-      networkError: true,
-      error: err.message || 'Network error',
-      httpStatus: 0,
-      body: null
-    };
+    return { networkError: true, error: err.message || 'Network error', httpStatus: 0, body: null };
   }
 
   let body = null;
@@ -115,12 +55,72 @@ export async function runSatelliteQuery(fields) {
     body = {
       status: 'error',
       final_answer: 'The server returned a non-JSON response.',
-      plan: null,
       tool_results: [],
-      errors: [`HTTP ${res.status}`],
-      execution_trace: []
+      errors: [`HTTP ${res.status}`]
     };
   }
 
   return { networkError: false, httpStatus: res.status, body };
+}
+
+/**
+ * POST /api/v1/query/stream: same payload as runQuery, but the backend
+ * pushes one Server-Sent Event per LangGraph node as it actually completes
+ * ({type:'step', step:{node,timestamp,summary}}), then a closing
+ * {type:'final', ...same shape as runQuery's body} event. Native
+ * EventSource can't send a POST body, so this parses the stream manually.
+ *
+ * onStep(step) fires for each step event, in order, as it arrives.
+ * Resolves with the final event's payload once the stream closes; resolves
+ * with { networkError: true, error } instead if the request itself fails.
+ */
+export async function runQueryStream(payload, { onStep } = {}) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/api/v1/query/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    return { networkError: true, error: err.message || 'Network error' };
+  }
+
+  if (!res.ok || !res.body) {
+    return { networkError: true, error: `HTTP ${res.status}` };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let final = null;
+  let streamError = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary;
+    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data: '));
+      if (!dataLine) continue;
+
+      let event;
+      try {
+        event = JSON.parse(dataLine.slice(6));
+      } catch {
+        continue;
+      }
+
+      if (event.type === 'step') onStep?.(event.step);
+      else if (event.type === 'final') final = event;
+      else if (event.type === 'error') streamError = event.message;
+    }
+  }
+
+  if (final) return { networkError: false, body: final };
+  return { networkError: true, error: streamError || 'Stream ended without a final result.' };
 }

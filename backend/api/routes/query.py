@@ -6,11 +6,12 @@ Thin HTTP bridge → LangGraph. No Sentinel Hub / ERA5 logic here.
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend.api.models import (
     QUERY_OPENAPI_EXAMPLES,
@@ -21,45 +22,16 @@ from backend.api.models import (
     resolve_output_dir,
 )
 from backend.api.status_codes import http_status_for_query
-from backend.orchestrator.graph import invoke_satquery
-from backend.orchestrator.state import empty_state
+from backend.orchestrator.graph import GRAPH_INVOKE_CONFIG, invoke_satquery, satquery_graph
+from backend.orchestrator.state import SatQueryState, empty_state
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/health", response_model=HealthResponse, tags=["meta"])
-def health() -> HealthResponse:
-    return HealthResponse(status="ok")
-
-
-@router.post(
-    "/api/v1/query",
-    response_model=QueryResponse,
-    tags=["query"],
-    responses={
-        200: {"model": QueryResponse, "description": "Tool succeeded, or chat reply."},
-        400: {"model": QueryResponse, "description": "Invalid input or missing location."},
-        404: {"model": QueryResponse, "description": "No matching scene or weather data for the filters."},
-        502: {"model": QueryResponse, "description": "Upstream imagery/weather provider failed."},
-        500: {"model": QueryResponse, "description": "Unhandled server error."},
-    },
-)
-def run_query(
-    body: Annotated[
-        QueryRequest,
-        Body(openapi_examples=QUERY_OPENAPI_EXAMPLES),
-    ],
-) -> JSONResponse:
-    logger.info(
-        "Received query: %r  bbox=%s  input_file=%s",
-        body.query,
-        body.bbox,
-        body.input_file,
-    )
-
-    state = empty_state(
+def _state_from_request(body: QueryRequest) -> SatQueryState:
+    return empty_state(
         query=body.query,
         bbox=body.bbox,
         latitude=body.latitude,
@@ -98,6 +70,39 @@ def run_query(
         calculate_fragmentation=body.calculate_fragmentation,
     )
 
+
+@router.get("/health", response_model=HealthResponse, tags=["meta"])
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")
+
+
+@router.post(
+    "/api/v1/query",
+    response_model=QueryResponse,
+    tags=["query"],
+    responses={
+        200: {"model": QueryResponse, "description": "Tool succeeded, or chat reply."},
+        400: {"model": QueryResponse, "description": "Invalid input or missing location."},
+        404: {"model": QueryResponse, "description": "No matching scene or weather data for the filters."},
+        502: {"model": QueryResponse, "description": "Upstream imagery/weather provider failed."},
+        500: {"model": QueryResponse, "description": "Unhandled server error."},
+    },
+)
+def run_query(
+    body: Annotated[
+        QueryRequest,
+        Body(openapi_examples=QUERY_OPENAPI_EXAMPLES),
+    ],
+) -> JSONResponse:
+    logger.info(
+        "Received query: %r  bbox=%s  input_file=%s",
+        body.query,
+        body.bbox,
+        body.input_file,
+    )
+
+    state = _state_from_request(body)
+
     try:
         result = invoke_satquery(state)
     except Exception as exc:
@@ -129,6 +134,64 @@ def run_query(
             "(ops: wrong interpreter or working directory)"
         )
     return JSONResponse(status_code=status_code, content=payload.model_dump())
+
+
+@router.post("/api/v1/query/stream", tags=["query"])
+def run_query_stream(
+    body: Annotated[
+        QueryRequest,
+        Body(openapi_examples=QUERY_OPENAPI_EXAMPLES),
+    ],
+) -> StreamingResponse:
+    """Server-Sent Events variant of /api/v1/query: emits one `step` event per
+    LangGraph node (validate, plan, execute, advance, respond) as it actually
+    completes, then a closing `final` event with the same payload shape as
+    the non-streaming endpoint -- for a UI that wants to show the tool chain
+    unfolding live instead of only after the whole request finishes.
+    """
+    logger.info(
+        "Received streaming query: %r  bbox=%s  input_file=%s",
+        body.query,
+        body.bbox,
+        body.input_file,
+    )
+    state = _state_from_request(body)
+
+    def event_gen():
+        accumulated: dict[str, Any] = dict(state)
+        try:
+            for update in satquery_graph.stream(state, GRAPH_INVOKE_CONFIG, stream_mode="updates"):
+                for node_update in (update or {}).values():
+                    if not isinstance(node_update, dict):
+                        continue
+                    for key, value in node_update.items():
+                        if key in ("execution_trace", "tool_results") and isinstance(value, list):
+                            accumulated[key] = (accumulated.get(key) or []) + value
+                        else:
+                            accumulated[key] = value
+                    for entry in node_update.get("execution_trace") or []:
+                        yield f"data: {json.dumps({'type': 'step', 'step': entry}, default=str)}\n\n"
+
+            logger.info("Graph finished (stream): status=%r", accumulated.get("status"))
+            final_payload = {
+                "type": "final",
+                "status": accumulated.get("status", "error"),
+                "final_answer": accumulated.get("final_answer"),
+                "plan": accumulated.get("plan"),
+                "tool_results": accumulated.get("tool_results", []),
+                "errors": accumulated.get("errors", []),
+                "execution_trace": accumulated.get("execution_trace", []),
+            }
+            yield f"data: {json.dumps(final_payload, default=str)}\n\n"
+        except Exception as exc:
+            logger.exception("Graph raised an unhandled exception (stream)")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _latest_tool_error_type(result: dict) -> str | None:

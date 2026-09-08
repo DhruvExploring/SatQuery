@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -401,6 +402,138 @@ def _run_workflow_drought(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------
+# VISION TOOL — interprets a rendered image with a swappable VLM backend.
+# ---------------------------------------------------------------------
+
+_VIEWABLE_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+
+
+def _resolve_viewable_image(image_path: str) -> str:
+    """A vision model needs a plain image; a GeoTIFF gets rendered to a
+    temporary PNG first (same as the raster-preview endpoint)."""
+    source = Path(image_path)
+    if source.suffix.lower() in _VIEWABLE_IMAGE_SUFFIXES:
+        return str(source)
+    from backend.rendering.raster_preview import render_geotiff_preview
+
+    logger.info("[VISION RENDER] %s is not a viewable image, rendering a PNG preview", source.name)
+    png_bytes = render_geotiff_preview(str(source))
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as rendered:
+        rendered.write(png_bytes)
+        return rendered.name
+
+
+def _run_vlm_analysis(args: dict[str, Any]) -> dict[str, Any]:
+    if not settings.vision_tool_enabled:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "The vision tool is disabled (SATQUERY_VISION_TOOL_ENABLED=false).",
+            },
+        }
+
+    image_path = args.get("image_path")
+    if not image_path:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "analyze_imagery_vlm requires image_path.",
+            },
+        }
+    query = args.get("query") or "Describe what this image shows."
+    logger.info("[IMAGE RECEIVED] path=%s query=%r", image_path, query)
+
+    try:
+        from backend.vision.factory import get_vision_provider
+
+        resolved_path = _resolve_viewable_image(image_path)
+
+        logger.info(
+            "[VISION CALL] provider=%s model=%s",
+            settings.vision_tool_provider,
+            settings.vision_tool_model,
+        )
+        result = get_vision_provider().interpret(resolved_path, query)
+        logger.info(
+            "[VISION RESPONSE] provider=%s chars=%d",
+            result.get("provider", settings.vision_tool_provider),
+            len(result.get("text") or ""),
+        )
+        return {"status": "success", **result}
+
+    except Exception as exc:
+        logger.info("[VISION ERROR] %s", exc)
+        return _wrap_tool_error(exc)
+
+
+def _run_visual_compare(args: dict[str, Any]) -> dict[str, Any]:
+    """compare_images_visually: a qualitative two-image comparison via the
+    vision model -- unlike analyze_temporal_change, this never requires the
+    two rasters to be grid-aligned (same CRS/dimensions/transform), so it
+    still works across different sensors, dates, or even different places.
+    """
+    if not settings.vision_tool_enabled:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "The vision tool is disabled (SATQUERY_VISION_TOOL_ENABLED=false).",
+            },
+        }
+
+    image_path_a = args.get("image_path_a")
+    image_path_b = args.get("image_path_b")
+    if not image_path_a or not image_path_b:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "compare_images_visually requires image_path_a and image_path_b.",
+            },
+        }
+    query = args.get("query") or "Compare these two images and describe what's different between them."
+    logger.info("[IMAGE PAIR RECEIVED] a=%s b=%s query=%r", image_path_a, image_path_b, query)
+
+    try:
+        from backend.vision.factory import get_vision_provider
+
+        resolved_a = _resolve_viewable_image(image_path_a)
+        resolved_b = _resolve_viewable_image(image_path_b)
+
+        provider = get_vision_provider()
+        if not hasattr(provider, "compare"):
+            return {
+                "status": "error",
+                "error": {
+                    "type": "unsupported",
+                    "message": (
+                        f"The configured vision provider ({settings.vision_tool_provider}) "
+                        "does not support two-image comparison."
+                    ),
+                },
+            }
+
+        logger.info(
+            "[VISION COMPARE CALL] provider=%s model=%s",
+            settings.vision_tool_provider,
+            settings.vision_tool_model,
+        )
+        result = provider.compare([resolved_a, resolved_b], query)
+        logger.info(
+            "[VISION COMPARE RESPONSE] provider=%s chars=%d",
+            result.get("provider", settings.vision_tool_provider),
+            len(result.get("text") or ""),
+        )
+        return {"status": "success", **result}
+
+    except Exception as exc:
+        logger.info("[VISION COMPARE ERROR] %s", exc)
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
 # DISPATCH TABLE
 # ---------------------------------------------------------------------
 
@@ -435,6 +568,14 @@ _EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "workflow_wildfire_burn_severity": _run_workflow_wildfire,
     "workflow_flood_inundation_impact": _run_workflow_flood,
     "workflow_agricultural_drought_canopy_stress": _run_workflow_drought,
+
+    # Vision tool -- mark_region_in_image is the same underlying call, just a
+    # distinct planner-facing name for "locate/mark X" requests (see
+    # backend/vision/openai_provider.py, whose own prompt decides whether to
+    # return a bbox based on the query wording either way).
+    "analyze_imagery_vlm": _run_vlm_analysis,
+    "mark_region_in_image": _run_vlm_analysis,
+    "compare_images_visually": _run_visual_compare,
 }
 
 
@@ -454,7 +595,5 @@ def execute_tool(
                 "message": f"No executor is registered for tool '{name}'.",
             },
         }
-
-    logger.info("Executing SatQuery tool: %s", name)
 
     return executor(args)

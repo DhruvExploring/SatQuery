@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal, TypedDict
 from typing_extensions import NotRequired
 
 
-PlanAction = Literal["call_tool", "clarify", "chat", "respond_error"]
+PlanAction = Literal["call_tool", "clarify", "chat", "respond_error", "finish"]
 
 
 class Plan(TypedDict):
@@ -66,7 +66,7 @@ class SatQueryState(TypedDict):
     raster_after_path: NotRequired[str | None]
     band_selection: NotRequired[int | str]
     threshold_type: NotRequired[str]
-    threshold_value: NotRequired[float]
+    threshold_value: NotRequired[float | None]
     relative_change_threshold_percent: NotRequired[float | None]
     mask_encoding: NotRequired[str]
     analysis_output_dir: NotRequired[str | None]
@@ -136,7 +136,7 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
         "raster_after_path": None,
         "band_selection": 1,
         "threshold_type": "absolute",
-        "threshold_value": 0.15,
+        "threshold_value": None,
         "relative_change_threshold_percent": None,
         "mask_encoding": "bipolar_3class",
         "analysis_output_dir": None,

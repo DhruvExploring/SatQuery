@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -10,10 +11,17 @@ from backend.orchestrator.handshake import apply_advance, build_plan_update
 from backend.orchestrator import llm as llm_module
 from backend.orchestrator.registry import format_tool_success
 from backend.orchestrator.state import SatQueryState, trace_entry
+from backend.orchestrator.synthesis import synthesize_final_answer
 from backend.tools.executor import execute_tool
+
+logger = logging.getLogger("satquery.pipeline")
 
 
 def validate_input(state: SatQueryState) -> dict[str, Any]:
+    logger.info("[REQUEST RECEIVED] query=%r", (state.get("query") or "").strip())
+    if state.get("input_file"):
+        logger.info("[IMAGE RECEIVED] input_file=%s", state.get("input_file"))
+
     errors: list[str] = []
     query = (state.get("query") or "").strip()
 
@@ -73,6 +81,10 @@ def validate_input(state: SatQueryState) -> dict[str, Any]:
         if not errors
         else f"{len(errors)} validation error(s)"
     )
+    if errors:
+        logger.info("[VALIDATION FAILED] %s", "; ".join(errors))
+    else:
+        logger.info("[VALIDATION OK]")
 
     return {
         "errors": errors,
@@ -81,11 +93,22 @@ def validate_input(state: SatQueryState) -> dict[str, Any]:
 
 
 def plan(state: SatQueryState) -> dict[str, Any]:
+    provider = llm_module.settings.orchestrator_provider
+    logger.info(
+        "[ORCHESTRATOR INITIATED] provider=%s model=%s",
+        provider,
+        llm_module.settings.orchestrator_model if provider != "mock" else "keyword-planner",
+    )
     update = build_plan_update(state, llm_module.plan_single_tool)
     planned = update.get("plan") or {}
     action = planned.get("action")
     tool = planned.get("tool")
+    reason = planned.get("reason") or ""
     summary = f"action={action}" + (f" tool={tool}" if tool else "")
+    if action == "call_tool":
+        logger.info("[ORCHESTRATOR TOOL CALL] tool=%s reason=%r", tool, reason)
+    else:
+        logger.info("[ORCHESTRATOR DECISION] action=%s reason=%r", action, reason)
     update["execution_trace"] = [trace_entry("plan", summary)]
     return update
 
@@ -117,9 +140,16 @@ def execute(state: SatQueryState) -> dict[str, Any]:
             }
         args = trusted_args_for_tool(tool_name, state)
 
+    logger.info("[TOOL CALL] %s args=%s", tool_name, args)
     started = time.perf_counter()
     result = execute_tool(tool_name, args)
     duration_ms = (time.perf_counter() - started) * 1000.0
+    logger.info(
+        "[TOOL OUTPUT] %s status=%s duration_ms=%.0f",
+        tool_name,
+        result.get("status", "unknown"),
+        duration_ms,
+    )
 
     update: dict[str, Any] = {
         "tool_results": [{
@@ -168,6 +198,12 @@ def advance(state: SatQueryState) -> dict[str, Any]:
     summary = f"hops={hops} complete={complete}"
     if update.get("errors"):
         summary += " gated"
+    logger.info(
+        "[ORCHESTRATOR ADVANCE] hops=%s complete=%s%s",
+        hops,
+        complete,
+        " (more steps -> back to plan)" if not complete else " (handshake finished -> respond)",
+    )
     update["execution_trace"] = [trace_entry("advance", summary)]
     return update
 
@@ -175,6 +211,7 @@ def respond(state: SatQueryState) -> dict[str, Any]:
     errors = state.get("errors") or []
 
     if errors:
+        logger.info("[ORCHESTRATOR DECISION] status=error errors=%s", errors)
         return {
             "status": "error",
             "final_answer": (
@@ -196,6 +233,7 @@ def respond(state: SatQueryState) -> dict[str, Any]:
     action = planned.get("action")
 
     if action == "respond_error":
+        logger.info("[ORCHESTRATOR DECISION] status=error reason=%r", planned.get("reason"))
         return {
             "status": "error",
             "final_answer": (
@@ -221,6 +259,7 @@ def respond(state: SatQueryState) -> dict[str, Any]:
             "post_start_date and post_end_date for a T2 fetch window, "
             "or lulc_raster_path for land cover."
         )
+        logger.info("[ORCHESTRATOR DECISION] status=clarify reason=%r", reason)
         return {
             "status": "clarify",
             "final_answer": f"{reason} {guide}".strip() if reason else guide,
@@ -230,6 +269,7 @@ def respond(state: SatQueryState) -> dict[str, Any]:
         }
 
     if action == "chat":
+        logger.info("[ORCHESTRATOR DECISION] status=ok (chat, no tool needed)")
         return {
             "status": "ok",
             "final_answer": (
@@ -246,6 +286,7 @@ def respond(state: SatQueryState) -> dict[str, Any]:
     results = state.get("tool_results") or []
 
     if not results:
+        logger.info("[ORCHESTRATOR DECISION] status=error (no tool output collected)")
         return {
             "status": "error",
             "final_answer": "No tool output was collected.",
@@ -264,8 +305,16 @@ def respond(state: SatQueryState) -> dict[str, Any]:
         error = latest.get("error") or {}
         message = (
             error.get("message")
+            # Some tools' internal pre-flight checks (e.g. Tool 7's grid-
+            # misalignment / band-resolution / no-valid-pixels errors, Tool
+            # 8's no-valid-LULC-data error) return a top-level "message"
+            # instead of nesting it under "error" -- these are often the
+            # most specific, actionable messages available, so check here
+            # before falling back to a generic one.
+            or latest.get("message")
             or "Tool execution failed."
         )
+        logger.info("[ORCHESTRATOR DECISION] status=error tool=%s message=%r", tool_name, message)
         return {
             "status": "error",
             "final_answer": f"{tool_name} failed: {message}",
@@ -280,13 +329,20 @@ def respond(state: SatQueryState) -> dict[str, Any]:
     prefix = ""
     if len(results) > 1:
         prefix = f"Completed {len(results)}-step handshake. "
+
+    synthesized = synthesize_final_answer(state, results)
+    final_answer = synthesized or (prefix + format_tool_success(tool_name, latest))
+    logger.info(
+        "[ORCHESTRATOR DECISION] status=success tool=%s narrative=%s final_answer=%r",
+        tool_name,
+        "synthesized" if synthesized else "templated",
+        final_answer,
+    )
+
     return {
         "status": "success",
-        "final_answer": prefix + format_tool_success(
-            tool_name,
-            latest,
-        ),
+        "final_answer": final_answer,
         "execution_trace": [
-            trace_entry("respond", "success")
+            trace_entry("respond", "success (synthesized)" if synthesized else "success")
         ],
     }

@@ -15,7 +15,7 @@ def route_after_advance(state: SatQueryState) -> str:
     plan = state.get("plan") or {}
     idx = int(state.get("agenda_index") or 0)
     agenda = state.get("agenda") or []
-    if idx >= len(agenda):
+    if idx >= len(agenda) and state.get("intent") != "single_tool":
         return "respond"
     if plan.get("action") != "call_tool":
         return "respond"
