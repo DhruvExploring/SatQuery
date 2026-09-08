@@ -1,0 +1,47 @@
+# ============================================================
+# SatQuery AI - Benchmark Requirements
+# Karan - Baseline Benchmarking Pipeline
+# ============================================================
+
+# Core ML
+torch==2.7.1
+torchvision==0.22.1
+accelerate==1.14.0
+bitsandbytes==0.50.2
+peft==0.20.0
+einops==0.8.2
+timm==1.0.29
+
+# HuggingFace
+transformers==5.16.1
+huggingface_hub==1.29.0
+hf_transfer==0.1.9
+datasets==3.6.0
+
+# Image processing
+pillow==11.2.1
+opencv-python==4.11.0.86
+
+# Data handling
+numpy==2.2.6
+pandas==2.2.3
+openpyxl==3.1.5
+
+# Evaluation metrics
+nltk==3.9.1
+rouge-score==0.1.2
+sacrebleu==2.5.1
+sentence-transformers>=3.0.0
+
+# Utilities
+tqdm==4.67.1
+pyyaml==6.0.2
+python-dotenv==1.1.0
+
+# GeoTIFF support (for satellite images)
+rasterio==1.4.3
+
+# API (Sprint 4)
+fastapi==0.115.12
+uvicorn==0.34.3
+python-multipart==0.0.20

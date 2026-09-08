@@ -1,0 +1,24 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Model weights & Large directories (Too large for GitHub)
+models/
+raw_datasets/
+data/
+earthmind_repo/
+
+# Virtual Environment
+.venv/
+venv/
+
+# Generated Results & Reports
+reports/results/
+
+# Temporary & Log files
+*.log
+run_log.txt
+/*.json
+unified_train_manifest.json
