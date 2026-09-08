@@ -1,10 +1,14 @@
-"""Run the Week-1 graph from the command line (no FastAPI yet)."""
+"""Invoke the LangGraph orchestrator from the command line (no HTTP).
+
+Run from the SatQuery root:
+    python -m backend.demo
+"""
 
 from __future__ import annotations
 
 import json
 
-from backend.orchestrator.graph import satquery_graph
+from backend.orchestrator.graph import invoke_satquery
 from backend.orchestrator.state import empty_state
 
 
@@ -15,7 +19,7 @@ def run_demo() -> None:
         start_date="2025-01-01",
         end_date="2025-01-31",
     )
-    result = satquery_graph.invoke(state)
+    result = invoke_satquery(state)
     print(json.dumps(
         {
             "status": result.get("status"),

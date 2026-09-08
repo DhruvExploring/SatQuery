@@ -1,154 +1,450 @@
-"""MCP-shaped tool execution.
-
-Two paths, controlled by settings.use_mock_tools:
-
-  True  (default) → mock JSON, no network (tests always pass)
-  False           → calls satellite_tool.mcp_fetch_satellite_imagery()
-                    which is the extracted notebook logic
-
-The execute node in nodes.py calls only execute_tool(name, args).
-It never knows which path ran.
-
-To add a new tool (fetch_sar, fetch_lulc, etc.):
-  1. Add its real function import in _REAL_EXECUTORS
-  2. Add its mock in _MOCK_EXECUTORS
-  Nothing else changes.
-"""
+"""Tool execution dispatcher for SatQuery Tools 1–8."""
 
 from __future__ import annotations
 
-import importlib
+import logging
+import sys
+from pathlib import Path
 from typing import Any, Callable
 
 from backend.config.settings import settings
+from backend.orchestrator.registry import ANALYTICAL_S2_BANDS
 
-TOOL_FETCH = "fetch_satellite_imagery"
-TOOL_SAR = "fetch_sar"
+logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Mock executors — no network, always fast, used by tests
-# ---------------------------------------------------------------------------
-def _mock_fetch(args: dict[str, Any]) -> dict[str, Any]:
-    """Stand-in for fetch_satellite_imagery. No network."""
-    bbox = args.get("bbox") or [77.1, 28.5, 77.3, 28.7]
-    start_date = args.get("start_date") or settings.default_start_date
-    end_date = args.get("end_date") or settings.default_end_date
-    scene_id = "S2C_MSIL2A_20250128T053131_N0511_R105_T43RGM_20250128T084454"
-    file_name = (
-        f"sentinel2_{scene_id}_{start_date}_{end_date}_"
-        f"{args.get('modality', 'optical')}_mock.tif"
-    )
-    return {
-        "status": "success",
-        "data": {
-            "file_path": f"sih_satellite_data/{file_name}",
-            "file_name": file_name,
-            "format": "GeoTIFF",
-        },
-        "source": {
-            "provider": "Sentinel Hub",
-            "collection": "sentinel-2-l2a",
-            "scene_id": scene_id,
-            "acquisition_time": "2025-01-28T05:41:31Z",
-        },
-        "request": {
-            "bbox": bbox,
-            "start_date": start_date,
-            "end_date": end_date,
-            "modality": args.get("modality", "optical"),
-            "bands": args.get("bands"),
-            "max_cloud_cover": args.get("max_cloud_cover", 30.0),
-        },
-        "raster": {
-            "width": args.get("width", 512),
-            "height": args.get("height", 512),
-            "band_count": 3,
-            "dtype": "uint16",
-            "crs": args.get("crs", "EPSG:4326"),
-        },
-        "quality": {"cloud_cover": 0.0, "valid": True},
-        "flags": {"optical_quality_poor": False, "sar_recommended": False},
-    }
+_ROOT = Path(__file__).resolve().parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 
-def _not_implemented(tool_name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    """Return an executor that always reports the tool is not implemented yet."""
-    def _stub(args: dict[str, Any]) -> dict[str, Any]:
+def _wrap_tool_error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, ValueError):
         return {
             "status": "error",
             "error": {
-                "type": "not_implemented",
-                "message": (
-                    f"Tool '{tool_name}' is registered but not implemented yet. "
-                    "A real executor will be added when the tool notebook is ready."
-                ),
+                "type": "validation_error",
+                "message": str(exc),
             },
         }
-    return _stub
 
-
-_MOCK_EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    TOOL_FETCH: _mock_fetch,
-    TOOL_SAR: _not_implemented(TOOL_SAR),
-}
-
-
-# ---------------------------------------------------------------------------
-# Real executors — lazy-imported so tests never pay the import cost
-# ---------------------------------------------------------------------------
-def _real_fetch(args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Delegate to the extracted notebook module.
-    Import is deferred so the test suite never triggers it.
-    """
-    try:
-        tool_module = importlib.import_module(
-            "Tools.Tool_1_fetch_satellite_imagery.satellite_tool"
+    if isinstance(exc, ImportError):
+        logger.error(
+            "SATQUERY_IMPORT_ERROR interpreter=%s cwd=%s",
+            sys.executable,
+            Path.cwd(),
+            exc_info=True,
         )
-        return tool_module.mcp_fetch_satellite_imagery(
-            bbox=args.get("bbox") or [],
-            start_date=args.get("start_date") or settings.default_start_date,
-            end_date=args.get("end_date") or settings.default_end_date,
-            modality=args.get("modality", "optical"),
-            bands=args.get("bands"),
-            max_cloud_cover=float(args.get("max_cloud_cover") or settings.default_max_cloud_cover),
-            width=int(args.get("width") or settings.default_width),
-            height=int(args.get("height") or settings.default_height),
-            crs=args.get("crs", settings.default_crs),
-        )
-    except ImportError as exc:
         return {
             "status": "error",
             "error": {
                 "type": "import_error",
                 "message": (
-                    f"Could not import satellite_tool: {exc}. "
-                    "Ensure the Tools directory is in your PYTHONPATH "
-                    "or run from the SatQuery project root."
+                    f"Could not import tool module: {exc}. "
+                    f"Interpreter: {sys.executable}"
                 ),
             },
         }
 
+    return {
+        "status": "error",
+        "error": {
+            "type": "service_error",
+            "message": str(exc),
+        },
+    }
 
-_REAL_EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-    TOOL_FETCH: _real_fetch,
-    TOOL_SAR: _not_implemented(TOOL_SAR),
+
+def _first_present(args: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in args and args[key] is not None:
+            return args[key]
+    return None
+
+
+def _optional_fields(
+    args: dict[str, Any],
+    mapping: dict[str, str | tuple[str, ...]],
+) -> dict[str, Any]:
+    """Pass through caller-supplied values only.
+
+    Missing keys are omitted so each tool's Pydantic model keeps its own defaults
+    (e.g. VegetationIndicesRequest.calculate_heuristic_classification=True).
+    """
+    out: dict[str, Any] = {}
+    for dest, sources in mapping.items():
+        keys = sources if isinstance(sources, tuple) else (sources,)
+        value = _first_present(args, *keys)
+        if value is not None:
+            out[dest] = value
+    return out
+
+
+# ---------------------------------------------------------------------
+# TOOL 1
+# ---------------------------------------------------------------------
+
+def _run_optical(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_1_fetch_optical_imagery.fetch_optical_imagery import (
+            OpticalSatelliteRequest,
+            fetch_optical_imagery,
+        )
+
+        req = OpticalSatelliteRequest(
+            bbox=args.get("bbox") or [],
+            start_date=args.get("start_date") or settings.default_start_date,
+            end_date=args.get("end_date") or settings.default_end_date,
+            max_cloud_cover=float(
+                args.get("max_cloud_cover")
+                or settings.default_max_cloud_cover
+            ),
+            width=int(args.get("width") or settings.default_width),
+            height=int(args.get("height") or settings.default_height),
+            crs=args.get("crs") or settings.default_crs,
+        )
+
+        return fetch_optical_imagery(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 2
+# ---------------------------------------------------------------------
+
+def _run_multispectral(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_2_fetch_multispectral_imagery.fetch_multispectral_imagery import (
+            MultispectralSatelliteRequest,
+            fetch_multispectral_imagery,
+        )
+
+        req = MultispectralSatelliteRequest(
+            bbox=args.get("bbox") or [],
+            start_date=args.get("start_date") or settings.default_start_date,
+            end_date=args.get("end_date") or settings.default_end_date,
+            bands=args.get("bands") or ANALYTICAL_S2_BANDS,
+            max_cloud_cover=float(
+                args.get("max_cloud_cover")
+                or settings.default_max_cloud_cover
+            ),
+            width=int(args.get("width") or settings.default_width),
+            height=int(args.get("height") or settings.default_height),
+            crs=args.get("crs") or settings.default_crs,
+        )
+
+        return fetch_multispectral_imagery(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 3
+# ---------------------------------------------------------------------
+
+def _run_sar(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_3_fetch_sar_imagery.fetch_sar_imagery import (
+            SARSatelliteRequest,
+            fetch_sar_imagery,
+        )
+
+        req = SARSatelliteRequest(
+            bbox=args.get("bbox") or [],
+            start_date=args.get("start_date") or settings.default_start_date,
+            end_date=args.get("end_date") or settings.default_end_date,
+            scene_selection=args.get("scene_selection") or "most_recent",
+            polarization=args.get("polarization") or ["VV", "VH"],
+            orbit_direction=args.get("orbit_direction") or "BOTH",
+            width=int(args.get("width") or settings.default_width),
+            height=int(args.get("height") or settings.default_height),
+            crs=args.get("crs") or settings.default_crs,
+        )
+
+        return fetch_sar_imagery(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 4
+# ---------------------------------------------------------------------
+
+def _run_weather(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_4_fetch_weather_environment.fetch_weather_environment import (
+            WeatherEnvironmentRequest,
+            fetch_weather_environment,
+        )
+
+        req = WeatherEnvironmentRequest(
+            bbox=args.get("bbox"),
+            latitude=args.get("latitude"),
+            longitude=args.get("longitude"),
+            start_date=args.get("start_date") or settings.default_start_date,
+            end_date=args.get("end_date") or settings.default_end_date,
+            rolling_windows=args.get("rolling_windows") or [7, 30],
+        )
+
+        return fetch_weather_environment(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 5
+# ---------------------------------------------------------------------
+
+def _run_vegetation_indices(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_5_compute_vegetation_indices.compute_vegetation_indices import (
+            VegetationIndicesRequest,
+            compute_vegetation_indices,
+        )
+
+        req = VegetationIndicesRequest(
+            file_path=args.get("input_file") or args.get("file_path"),
+            **_optional_fields(
+                args,
+                {
+                    "indices": "indices",
+                    "band_mapping": "band_mapping",
+                    "calculate_heuristic_classification": (
+                        "calculate_heuristic_classification"
+                    ),
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                },
+            ),
+        )
+
+        return compute_vegetation_indices(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 6
+# ---------------------------------------------------------------------
+
+def _run_geotiff_inspection(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_6_inspect_geotiff_metadata.inspect_geotiff_metadata import (
+            GeoTIFFInspectionRequest,
+            inspect_geotiff_metadata,
+        )
+
+        req = GeoTIFFInspectionRequest(
+            file_path=args.get("input_file") or args.get("file_path"),
+            **_optional_fields(
+                args,
+                {
+                    "compare_with": "compare_with",
+                    "calculate_statistics": "calculate_statistics",
+                    "calculate_histogram": "calculate_histogram",
+                },
+            ),
+        )
+
+        return inspect_geotiff_metadata(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 7
+# ---------------------------------------------------------------------
+
+def _run_temporal_change(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_7_analyze_temporal_change.analyze_temporal_change import (
+            TemporalChangeRequest,
+            analyze_temporal_change,
+        )
+
+        req = TemporalChangeRequest(
+            raster_before_path=args.get("raster_before_path"),
+            raster_after_path=args.get("raster_after_path"),
+            **_optional_fields(
+                args,
+                {
+                    "band_selection": "band_selection",
+                    "threshold_type": "threshold_type",
+                    "threshold_value": "threshold_value",
+                    "relative_change_threshold_percent": (
+                        "relative_change_threshold_percent"
+                    ),
+                    "mask_encoding": "mask_encoding",
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                    "generate_difference_raster": "generate_difference_raster",
+                    "generate_change_mask": "generate_change_mask",
+                },
+            ),
+        )
+
+        return analyze_temporal_change(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 8
+# ---------------------------------------------------------------------
+
+def _run_spatial_landcover_terrain(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_8_analyze_spatial_landcover_terrain.analyze_spatial_landcover_terrain import (
+            SpatialLandcoverTerrainRequest,
+            analyze_spatial_landcover_terrain,
+        )
+
+        req = SpatialLandcoverTerrainRequest(
+            lulc_raster_path=args.get("lulc_raster_path"),
+            **_optional_fields(
+                args,
+                {
+                    "dem_raster_path": "dem_raster_path",
+                    "zone_mask_path": (
+                        "zone_mask_path",
+                        "last_change_mask_path",
+                    ),
+                    "calculate_fragmentation": "calculate_fragmentation",
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                    "class_legend": "class_legend",
+                    "zone_legend": "zone_legend",
+                },
+            ),
+        )
+
+        return analyze_spatial_landcover_terrain(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _weather_request_from_args(args: dict[str, Any]):
+    from Tool_4_fetch_weather_environment.fetch_weather_environment import (
+        WeatherEnvironmentRequest,
+    )
+
+    has_location = args.get("bbox") or (
+        args.get("latitude") is not None and args.get("longitude") is not None
+    )
+    if not has_location:
+        return None
+    return WeatherEnvironmentRequest(
+        bbox=args.get("bbox"),
+        latitude=args.get("latitude"),
+        longitude=args.get("longitude"),
+        start_date=args.get("start_date") or settings.default_start_date,
+        end_date=args.get("end_date") or settings.default_end_date,
+        rolling_windows=args.get("rolling_windows") or [7, 30],
+    )
+
+
+def _run_workflow_wildfire(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from satquery_workflows import workflow_wildfire_burn_severity
+
+        return workflow_wildfire_burn_severity(
+            pre_raster_path=args.get("pre_raster_path"),
+            post_raster_path=args.get("post_raster_path"),
+            lulc_raster_path=args.get("lulc_raster_path"),
+            dem_raster_path=args.get("dem_raster_path"),
+            output_dir=args.get("output_dir") or args.get("analysis_output_dir"),
+        )
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _run_workflow_flood(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from satquery_workflows import workflow_flood_inundation_impact
+
+        weather_request = None
+        if args.get("include_weather", True):
+            weather_request = _weather_request_from_args(args)
+        return workflow_flood_inundation_impact(
+            sar_pre_raster_path=args.get("sar_pre_raster_path"),
+            sar_post_raster_path=args.get("sar_post_raster_path"),
+            lulc_raster_path=args.get("lulc_raster_path"),
+            weather_request=weather_request,
+            dem_raster_path=args.get("dem_raster_path"),
+            output_dir=args.get("output_dir") or args.get("analysis_output_dir"),
+        )
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _run_workflow_drought(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from satquery_workflows import workflow_agricultural_drought_canopy_stress
+
+        weather_request = _weather_request_from_args(args)
+        if weather_request is None:
+            raise ValueError(
+                "Drought workflow requires bbox or latitude and longitude."
+            )
+        return workflow_agricultural_drought_canopy_stress(
+            multispectral_raster_path=args.get("multispectral_raster_path"),
+            weather_request=weather_request,
+            output_dir=args.get("output_dir") or args.get("analysis_output_dir"),
+        )
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# DISPATCH TABLE
+# ---------------------------------------------------------------------
+
+_EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+    # Tool 1
+    "fetch_satellite_imagery": _run_optical,
+    "fetch_optical_imagery": _run_optical,
+
+    # Tool 2
+    "fetch_multispectral_imagery": _run_multispectral,
+
+    # Tool 3
+    "fetch_sar": _run_sar,
+    "fetch_sar_imagery": _run_sar,
+
+    # Tool 4
+    "fetch_weather_environment": _run_weather,
+
+    # Tool 5
+    "compute_vegetation_indices": _run_vegetation_indices,
+
+    # Tool 6
+    "inspect_geotiff_metadata": _run_geotiff_inspection,
+
+    # Tool 7
+    "analyze_temporal_change": _run_temporal_change,
+
+    # Tool 8
+    "analyze_spatial_landcover_terrain": _run_spatial_landcover_terrain,
+
+    # Named science missions (satquery_workflows.py)
+    "workflow_wildfire_burn_severity": _run_workflow_wildfire,
+    "workflow_flood_inundation_impact": _run_workflow_flood,
+    "workflow_agricultural_drought_canopy_stress": _run_workflow_drought,
 }
 
 
-# ---------------------------------------------------------------------------
-# Public dispatch — the ONLY function called by nodes.py
-# ---------------------------------------------------------------------------
-def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """
-    Dispatch to mock or real executor based on settings.use_mock_tools.
+def execute_tool(
+    name: str,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Dispatch a tool by registry name."""
 
-    Returns a dict matching the MCP tool contract:
-      { "status": "success"|"error", "data": ..., "source": ..., ... }
-    """
-    registry = _MOCK_EXECUTORS if settings.use_mock_tools else _REAL_EXECUTORS
-    executor = registry.get(name)
+    executor = _EXECUTORS.get(name)
 
     if executor is None:
         return {
@@ -158,5 +454,7 @@ def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 "message": f"No executor is registered for tool '{name}'.",
             },
         }
+
+    logger.info("Executing SatQuery tool: %s", name)
 
     return executor(args)

@@ -1,0 +1,6 @@
+{
+  "file_path": "c:\\Users\\User\\Desktop\\Tools\\Tool_2_fetch_multispectral_imagery\\test_runs\\sample_multispectral_output.tif",
+  "compare_with": "c:\\Users\\User\\Desktop\\Tools\\Tool_1_fetch_optical_imagery\\test_runs\\sample_optical_output.tif",
+  "calculate_statistics": true,
+  "calculate_histogram": true
+}
