@@ -361,15 +361,7 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
     role = step.get("role") or ""
 
     if result.get("status") != "success":
-        error_type = (result.get("error") or {}).get("type")
-        # An import_error means the *environment* is broken (a dependency
-        # missing for whichever interpreter is running the backend) -- every
-        # tool that needs that dependency will fail identically, so letting
-        # the continuation loop retry with a "different" tool just burns
-        # hops and LLM calls until MAX_HANDSHAKE_HOPS gives up anyway. Surface
-        # it immediately instead; it's not something a different tool choice
-        # can route around.
-        if state.get("intent") == "single_tool" and error_type != "import_error":
+        if state.get("intent") == "single_tool":
             # Don't just give up -- the failure (often a specific, useful
             # diagnostic, e.g. Tool 7's grid-misalignment message) will be in
             # tool_results when build_plan_update re-consults the planner,
