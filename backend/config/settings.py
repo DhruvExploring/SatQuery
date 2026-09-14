@@ -53,19 +53,23 @@ class Settings:
     memory_embed_model: str = "openai:text-embedding-3-small"
 
     # --- Orchestrator role ---
-    orchestrator_provider: str = "mock"  # mock | openai | anthropic
-    orchestrator_model: str = "gpt-5.2"
+    orchestrator_provider: str = "mock"  # mock | openai | anthropic | gemini
+    orchestrator_model: str = "gemini-2.5-flash"
     orchestrator_api_key: str | None = None
     orchestrator_base_url: str | None = None
     orchestrator_synthesize_answer: bool = True
 
     # --- Vision tool role ---
     vision_tool_enabled: bool = False
-    vision_tool_provider: str = "openai"  # openai | local
-    vision_tool_model: str = "gpt-4o-mini"
+    vision_tool_provider: str = "openai"  # openai | local | gemini
+    vision_tool_model: str = "gemini-2.5-flash"
     vision_tool_api_key: str | None = None
     vision_tool_base_url: str | None = None
     vision_tool_timeout_s: float = 60.0
+
+    # --- Tool 9: Web Search Intelligence ---
+    tavily_api_key: str | None = None
+    web_search_provider: str = "tavily"  # tavily | duckduckgo
 
     # --- Networking / deployment ---
     cors_allowed_origins: tuple[str, ...] = ("*",)
@@ -76,9 +80,9 @@ def load_settings() -> Settings:
     orchestrator_provider = (
         os.getenv("SATQUERY_ORCHESTRATOR_PROVIDER") or "mock"
     ).strip().lower()
-    if orchestrator_provider not in {"mock", "openai", "anthropic"}:
+    if orchestrator_provider not in {"mock", "openai", "anthropic", "gemini"}:
         raise ValueError(
-            "SATQUERY_ORCHESTRATOR_PROVIDER must be one of: mock, openai, anthropic. "
+            "SATQUERY_ORCHESTRATOR_PROVIDER must be one of: mock, openai, anthropic, gemini. "
             f"Got {orchestrator_provider!r}."
         )
 
@@ -86,9 +90,9 @@ def load_settings() -> Settings:
     vision_tool_provider = (
         os.getenv("SATQUERY_VISION_TOOL_PROVIDER") or "openai"
     ).strip().lower()
-    if vision_tool_enabled and vision_tool_provider not in {"openai", "local"}:
+    if vision_tool_enabled and vision_tool_provider not in {"openai", "local", "gemini"}:
         raise ValueError(
-            "SATQUERY_VISION_TOOL_PROVIDER must be one of: openai, local. "
+            "SATQUERY_VISION_TOOL_PROVIDER must be one of: openai, local, gemini. "
             f"Got {vision_tool_provider!r}."
         )
 
@@ -98,14 +102,27 @@ def load_settings() -> Settings:
             orchestrator_api_key = os.getenv("OPENAI_API_KEY") or None
         elif orchestrator_provider == "anthropic":
             orchestrator_api_key = os.getenv("ANTHROPIC_API_KEY") or None
+        elif orchestrator_provider == "gemini":
+            orchestrator_api_key = (
+                os.getenv("GEMINI_API_KEY")
+                or os.getenv("GOOGLE_API_KEY")
+                or None
+            )
 
     vision_tool_api_key = os.getenv("SATQUERY_VISION_TOOL_API_KEY") or None
-    if vision_tool_api_key is None and vision_tool_provider == "openai":
-        vision_tool_api_key = os.getenv("OPENAI_API_KEY") or None
+    if vision_tool_api_key is None:
+        if vision_tool_provider == "openai":
+            vision_tool_api_key = os.getenv("OPENAI_API_KEY") or None
+        elif vision_tool_provider == "gemini":
+            vision_tool_api_key = (
+                os.getenv("GEMINI_API_KEY")
+                or os.getenv("GOOGLE_API_KEY")
+                or None
+            )
 
     return Settings(
         orchestrator_provider=orchestrator_provider,
-        orchestrator_model=os.getenv("SATQUERY_ORCHESTRATOR_MODEL", "gpt-5.2"),
+        orchestrator_model=os.getenv("SATQUERY_ORCHESTRATOR_MODEL", "gemini-2.5-flash"),
         orchestrator_api_key=orchestrator_api_key,
         orchestrator_base_url=os.getenv("SATQUERY_ORCHESTRATOR_BASE_URL") or None,
         orchestrator_synthesize_answer=_as_bool(
@@ -119,6 +136,8 @@ def load_settings() -> Settings:
         vision_tool_timeout_s=float(
             os.getenv("SATQUERY_VISION_TOOL_TIMEOUT_S", "60")
         ),
+        tavily_api_key=os.getenv("TAVILY_API_KEY") or None,
+        web_search_provider=(os.getenv("SATQUERY_WEB_SEARCH_PROVIDER") or "tavily").strip().lower(),
         cors_allowed_origins=tuple(
             _as_origin_list(os.getenv("SATQUERY_CORS_ALLOWED_ORIGINS"))
         ),

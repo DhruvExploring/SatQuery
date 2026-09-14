@@ -22,6 +22,7 @@ from backend.orchestrator.registry import (
     TOOL_SPEC,
     TOOL_TEMPORAL,
     TOOL_WEATHER,
+    TOOL_WEB,
     enforce_call_tool_location,
     match_tool_from_query,
     trusted_args_for_tool,
@@ -87,6 +88,23 @@ _ROUTING_HINTS = """Routing hints:
   choose it — the backend can derive the bbox from an uploaded file's own
   bounds; do not avoid the tool or substitute a different one for this
   reason.
+- Questions regarding real-world causes of an event (e.g. "what caused the flood",
+  "why did water rise", "Hathnikund barrage discharge", "barrage water release"),
+  infrastructure project names (e.g. "which expressway is this", "highway name",
+  "who built this"), disaster ground truth, news, or background intelligence →
+  fetch_web_intelligence. It searches the web to provide verified ground-truth
+  facts that cannot be derived from satellite pixels alone.
+- Guidelines for 'fetch_web_intelligence' search queries:
+  * Extract and prioritize the core entity and specific sub-questions asked by the user rather than generating broad topical search terms.
+  * Do NOT generate broad or generic queries (e.g., avoid 'City flood 2024 overview').
+  * Include specific technical and investigative keywords requested in the user prompt.
+  * If the user asks about breach points, channels, barrages, or infrastructure failures, explicitly include targeted operational terms:
+    e.g., 'breach', 'canal', 'rivulet', 'channel', 'regulator', 'embankment', 'damage'.
+  * Combine: [Location/City] + [Event/Month/Year] + [Specific Question Subject] + [Synonyms].
+    Example: User asks 'Which drainage channel breached in Vijayawada flood Sept 2024?'
+    Formulate Query in args.query: 'Vijayawada September 2024 flood drainage channel breach rivulet stream'
+- Do not execute secondary web searches if the initial search results adequately answer the query. Never repeat identical or near-identical search queries.
+- Never call the same tool more than once with identical arguments if it already succeeded in tool_results.
 
 You are not limited to a single tool call per request. If one tool's output
 is not enough to answer confidently, you may be consulted again after it
@@ -114,14 +132,15 @@ The tool field must be exactly one of these registered names, copied verbatim:
 
 Never invent names (not Sentinelimagery, SentinelHub_Search, Skill names, or API names).
 Do not execute tools and do not invent file paths, coordinates, dates, raster
-parameters or credentials. The backend supplies trusted arguments.
+parameters or credentials. The backend supplies trusted arguments for remote sensing tools.
+For fetch_web_intelligence only, supply an entity-focused, high-precision query in args: {{"query": "<formulated query>"}} according to the search query guidelines (or set args to {{}} to default to the raw user query). For all other tools, set args to {{}}.
 
 Available tools:
 {_TOOL_LINES}
 
 {_ROUTING_HINTS}
 
-Return JSON with action, tool, args, reason. Set args to {{}}.
+Return JSON with action, tool, args, reason.
 """
 
 SKILLKIT_SYSTEM_PROMPT = f"""You are the SatQuery planner.
@@ -129,7 +148,9 @@ Use Skill/SkillRead only as background. The tool field must still be exactly one
 of: {', '.join(_PLANNER_TOOL_NAMES)}.
 Never execute a tool, never invent file paths or parameters, and never return
 Sentinel Hub / Skill / API identifiers as the tool name.
-The backend supplies trusted arguments. Return action, tool, args, reason.
+The backend supplies trusted arguments for remote sensing tools.
+For fetch_web_intelligence only, supply an entity-focused, high-precision query in args: {{"query": "<formulated query>"}} according to the search query guidelines.
+Return action, tool, args, reason.
 
 {_ROUTING_HINTS}
 """
@@ -143,11 +164,13 @@ The backend supplies trusted arguments. Return action, tool, args, reason.
 _CONTINUATION_SUFFIX = """
 You have already gathered one or more tool results for this same request
 (see tool_results_so_far in the Context below) and are being asked whether to
-continue. If another tool call would meaningfully ground or improve the
-answer, return action=call_tool for it as usual. If what's gathered is
-already enough to answer confidently, return action=chat -- in this
-follow-up context that means "stop gathering, finalize the answer from what
-has been collected," not "this request needs no tool at all.\""""
+continue. If another genuinely different tool call would meaningfully ground or
+improve the answer, return action=call_tool for it.
+Do not execute secondary web searches if the initial search results adequately answer the query.
+Never repeat identical or near-identical search queries or tools that have already succeeded.
+If what's gathered is already enough to answer confidently (or the same tool has already run),
+return action=chat -- in this follow-up context that means "stop gathering, finalize the answer
+from what has been collected," not "this request needs no tool at all.\""""
 
 # Aliases the model may copy from older skills or Sentinel Hub docs.
 _LLM_TOOL_ALIASES = {
@@ -210,13 +233,27 @@ def _build_base_llm() -> Any:
                 "(SATQUERY_ORCHESTRATOR_API_KEY or OPENAI_API_KEY)."
             )
         from langchain_openai import ChatOpenAI
+
+        model = settings.orchestrator_model
+        if settings.orchestrator_base_url and "openrouter.ai" in settings.orchestrator_base_url:
+            model = {
+                "nvidia/nemotron-3-ultra:free": "nvidia/nemotron-3-super-120b-a12b:free",
+            }.get(model, model)
+
         kwargs: dict[str, Any] = {
-            "model": settings.orchestrator_model,
+            "model": model,
             "api_key": settings.orchestrator_api_key,
             "temperature": 0,
+            "timeout": 45.0,
+            "max_retries": 2,
         }
         if settings.orchestrator_base_url:
             kwargs["base_url"] = settings.orchestrator_base_url
+            if "openrouter.ai" in settings.orchestrator_base_url:
+                kwargs["default_headers"] = {
+                    "HTTP-Referer": "https://satquery.local",
+                    "X-Title": "SatQuery",
+                }
         return ChatOpenAI(**kwargs)
 
     if settings.orchestrator_provider == "anthropic":
@@ -230,8 +267,21 @@ def _build_base_llm() -> Any:
             model=settings.orchestrator_model,
             api_key=settings.orchestrator_api_key,
         )
+    if settings.orchestrator_provider == "gemini":
+        if not settings.orchestrator_api_key:
+            raise ValueError(
+                "SATQUERY_ORCHESTRATOR_PROVIDER=gemini but no API key is set "
+                "(SATQUERY_ORCHESTRATOR_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY)."
+            )
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
-    raise ValueError("No LLM provider is enabled (SATQUERY_ORCHESTRATOR_PROVIDER=mock).")
+        return ChatGoogleGenerativeAI(
+            model=settings.orchestrator_model,
+            google_api_key=settings.orchestrator_api_key,
+            timeout=60,
+        )
+
+    raise ValueError(f"No LLM provider is enabled (SATQUERY_ORCHESTRATOR_PROVIDER={settings.orchestrator_provider}).")
 
 _PLAN_SCHEMA = {
     "title": "Plan",
@@ -256,6 +306,9 @@ def _build_llm_client() -> Any:
     kit = _build_skillkit()
     if kit is not None:
         base = base.bind_tools(kit.tools)
+    if settings.orchestrator_provider == "gemini":
+        from langchain_core.output_parsers import JsonOutputParser
+        return base | JsonOutputParser()
     return base.with_structured_output(_PLAN_SCHEMA)
 
 def _build_memory_tools(user_id: str | None) -> list[Any]:
@@ -275,6 +328,9 @@ def _keyword_plan(state: SatQueryState) -> Plan:
     query = (state.get("query") or "").strip()
     if not query:
         return {"action": "respond_error", "tool": None, "args": {}, "reason": "Empty query."}
+
+    if state.get("tool_results"):
+        return {"action": "finish", "tool": None, "args": {}, "reason": "Keyword planner completed tool execution."}
 
     tool, reason = match_tool_from_query(query)
     if not tool:
@@ -313,7 +369,7 @@ def _llm_plan(state: SatQueryState) -> Plan:
 
     client = _build_llm_client()
     memory_tools = _build_memory_tools(state.get("user_id"))
-    if memory_tools:
+    if memory_tools and hasattr(client, "bind_tools"):
         client = client.bind_tools(memory_tools)
 
     result: dict[str, Any] = client.invoke([
@@ -350,10 +406,30 @@ def _llm_plan(state: SatQueryState) -> Plan:
             ).strip()
         return fallback
 
+    if tool_results:
+        already_succeeded = any(
+            r.get("tool") == resolved and (r.get("result") or {}).get("status") == "success"
+            for r in tool_results
+        )
+        if already_succeeded:
+            logger.info("LLM requested duplicate tool %s; finishing handshake instead.", resolved)
+            return {
+                "action": "finish",
+                "tool": None,
+                "args": {},
+                "reason": result.get("reason") or f"{resolved} already executed successfully.",
+            }
+
+    planned_args = trusted_args_for_tool(resolved, state)
+    if resolved == TOOL_WEB and result.get("args", {}).get("query"):
+        llm_q = str(result["args"]["query"]).strip()
+        if llm_q:
+            planned_args["query"] = llm_q
+
     planned = {
         "action": "call_tool",
         "tool": resolved,
-        "args": trusted_args_for_tool(resolved, state),
+        "args": planned_args,
         "reason": result.get("reason", ""),
     }
     return enforce_call_tool_location(planned, state)

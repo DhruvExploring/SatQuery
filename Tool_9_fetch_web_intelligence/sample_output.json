@@ -1,0 +1,29 @@
+{
+  "status": "success",
+  "provider": "tavily",
+  "fallback_triggered": false,
+  "fallback_reason": null,
+  "query": "What caused the July 2023 Delhi Yamuna flood, Hathnikund barrage discharge, and water levels at Old Railway Bridge? Delhi, India",
+  "results_count": 5,
+  "summary": "In July 2023, the Yamuna River in Delhi experienced severe flooding triggered by intense upstream monsoon rainfall in Himachal Pradesh and Uttarakhand leading to massive water discharge from the Hathnikund Barrage in Haryana (exceeding 3.59 lakh cusecs). The water level at Delhi's Old Railway Bridge reached an all-time record of 208.66 meters on July 13, 2023, surpassing the 1978 record of 207.49 meters, inundating low-lying areas and key roads including the Ring Road and ITO.",
+  "results": [
+    {
+      "title": "2023 Delhi flood - Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/2023_Delhi_flood",
+      "content": "In July 2023, Delhi experienced its worst flood in 45 years. The Yamuna river water level reached an all-time peak of 208.66 metres on July 13, breaking the previous record of 207.49 metres set in September 1978.",
+      "score": 0.965
+    },
+    {
+      "title": "Delhi Flood: Hathnikund Barrage discharge and record water levels",
+      "url": "https://indianexpress.com/article/cities/delhi/delhi-yamuna-water-level-breaches-all-time-high-8833446/",
+      "content": "Massive water release from Hathnikund Barrage in Haryana coupled with jammed gates at the ITO barrage caused extensive inundation across Delhi's river corridor and Kashmere Gate.",
+      "score": 0.892
+    },
+    {
+      "title": "Yamuna Water Level at Old Railway Bridge Record Analysis",
+      "url": "https://www.thehindu.com/news/cities/Delhi/yamuna-swells-delhi-floods-ground-report/article67074211.ece",
+      "content": "Evacuation of over 25,000 residents from the Yamuna floodplains was carried out as water breached danger marks (205.33m) and warning levels (204.50m).",
+      "score": 0.841
+    }
+  ]
+}

@@ -22,6 +22,7 @@ TOOL_DROUGHT = "workflow_agricultural_drought_canopy_stress"
 TOOL_VLM = "analyze_imagery_vlm"
 TOOL_MARK_REGION = "mark_region_in_image"
 TOOL_VISUAL_COMPARE = "compare_images_visually"
+TOOL_WEB = "fetch_web_intelligence"
 
 PLANNER_PRIORITY = (
     TOOL_SAR,
@@ -265,6 +266,14 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
             "image_path_b": after,
             "query": state.get("query"),
         }
+    if tool == TOOL_WEB:
+        return {
+            "query": state.get("query"),
+            "location_hint": state.get("location_hint"),
+            "bbox": state.get("bbox"),
+            "latitude": state.get("latitude"),
+            "longitude": state.get("longitude"),
+        }
     raise ValueError(f"Unknown tool: {tool}")
 
 
@@ -301,6 +310,8 @@ def format_tool_success(tool: str, result: dict[str, Any]) -> str:
         return f"{pipeline} completed successfully."
     if tool in (TOOL_VLM, TOOL_MARK_REGION, TOOL_VISUAL_COMPARE):
         return result.get("text") or "Vision interpretation completed."
+    if tool == TOOL_WEB:
+        return result.get("summary") or "Web intelligence retrieved."
     return f"{tool} completed successfully."
 
 
@@ -473,6 +484,25 @@ TOOL_SPEC: dict[str, dict[str, Any]] = {
         "args_builder": lambda state: trusted_args_for_tool(TOOL_VISUAL_COMPARE, state),
         "response_formatter": lambda result: format_tool_success(TOOL_VISUAL_COMPARE, result),
     },
+    TOOL_WEB: {
+        "name": TOOL_WEB,
+        "description": (
+            "Search the web for real-world ground truth, event causes (e.g. barrage water discharge, "
+            "disaster background, historical records), infrastructure project names (e.g. expressway/dam/bridge names), "
+            "or location history and grounding."
+        ),
+        "requires": ["query"],
+        "keywords": (
+            "what caused", "why did", "why is", "ground truth", "ground reality", "news",
+            "hathnikund", "barrage", "water level record", "expressway", "infrastructure",
+            "project name", "who built", "history", "search the web", "web search", "web intelligence",
+            "flood cause", "incident", "disaster report", "why was there", "clearing reason",
+            "ground context"
+        ),
+        "location": "none",
+        "args_builder": lambda state: trusted_args_for_tool(TOOL_WEB, state),
+        "response_formatter": lambda result: format_tool_success(TOOL_WEB, result),
+    },
     "fetch_satellite_imagery": {
         "name": "fetch_satellite_imagery",
         "description": "Fetch Sentinel-2 optical imagery for a bbox and date range.",
@@ -502,6 +532,7 @@ TOOL_REGISTRY = {
 }
 
 _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
+    (TOOL_WEB, ("what caused", "why did", "why is", "ground truth", "ground reality", "news", "hathnikund", "barrage", "expressway", "infrastructure", "project name", "who built", "history", "search the web", "web search", "web intelligence", "flood cause", "incident", "disaster report", "clearing reason", "ground context")),
     (TOOL_MARK_REGION, ("mark the region", "mark this region", "mark the area", "highlight the region", "highlight the area", "circle the", "draw a box around", "point out", "where exactly is", "locate the")),
     (TOOL_VLM, ("describe this image", "describe the image", "what do you see", "what does this look like", "interpret this imagery", "interpret this image", "visually describe")),
     (TOOL_SPATIAL, ("land cover", "landcover", "lulc", "worldcover", "terrain", "slope", "elevation", "fragmentation", "patch")),
@@ -528,6 +559,8 @@ def location_ready_for_tool(tool: str, state: SatQueryState) -> bool:
     if tool not in TOOL_SPEC:
         return False
     loc = TOOL_SPEC[tool]["location"]
+    if loc == "none":
+        return bool(state.get("query"))
     if loc in {"file", "files"}:
         if loc == "file":
             return bool(state.get("input_file") or _last_raster_path(state))
@@ -575,8 +608,14 @@ def enforce_call_tool_location(plan: Plan, state: SatQueryState) -> Plan:
         # so handshake.build_plan_update can recover it — a fetch tool that's
         # only missing a bbox may still be reachable by deriving one from an
         # uploaded file's own geospatial bounds instead of asking the user.
-        return {"action": "clarify", "tool": tool, "args": {}, "reason": _missing_input_reason(tool)}
-    plan["args"] = trusted_args_for_tool(tool, state)
+        keep_tool = tool if state.get("input_file") else None
+        return {"action": "clarify", "tool": keep_tool, "args": {}, "reason": _missing_input_reason(tool)}
+    trusted = trusted_args_for_tool(tool, state)
+    if tool == TOOL_WEB and plan.get("args", {}).get("query"):
+        llm_q = str(plan["args"]["query"]).strip()
+        if llm_q:
+            trusted["query"] = llm_q
+    plan["args"] = trusted
     return plan
 
 

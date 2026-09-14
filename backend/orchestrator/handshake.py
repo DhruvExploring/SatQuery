@@ -45,6 +45,27 @@ def classify_intent(query: str) -> Intent:
     if _has_any(
         q,
         (
+            "what caused",
+            "why did",
+            "why is",
+            "ground truth",
+            "ground reality",
+            "news",
+            "hathnikund",
+            "barrage",
+            "search the web",
+            "web search",
+            "web intelligence",
+            "who built",
+            "project name",
+            "incident report",
+            "history of",
+        ),
+    ):
+        return "single_tool"
+    if _has_any(
+        q,
+        (
             "wildfire",
             "wild fire",
             "burn severity",
@@ -155,6 +176,23 @@ def build_plan_update(
             # of stopping just because the current agenda ran out.
             planned = single_tool_planner(state)
             if planned.get("action") == "call_tool" and planned.get("tool"):
+                tool = planned["tool"]
+                already_succeeded = any(
+                    r.get("tool") == tool and (r.get("result") or {}).get("status") == "success"
+                    for r in (state.get("tool_results") or [])
+                )
+                if already_succeeded:
+                    return {
+                        "agenda": agenda,
+                        "agenda_index": idx,
+                        "handshake_complete": True,
+                        "plan": {
+                            "action": "finish",
+                            "tool": None,
+                            "args": {},
+                            "reason": f"{tool} already executed successfully.",
+                        },
+                    }
                 new_step: AgendaStep = {
                     "tool": planned["tool"],
                     "role": "single",
@@ -369,7 +407,11 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
         # hops and LLM calls until MAX_HANDSHAKE_HOPS gives up anyway. Surface
         # it immediately instead; it's not something a different tool choice
         # can route around.
-        if state.get("intent") == "single_tool" and error_type != "import_error":
+        if (
+            state.get("intent") == "single_tool"
+            and error_type != "import_error"
+            and settings.orchestrator_provider != "mock"
+        ):
             # Don't just give up -- the failure (often a specific, useful
             # diagnostic, e.g. Tool 7's grid-misalignment message) will be in
             # tool_results when build_plan_update re-consults the planner,
@@ -409,7 +451,7 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
             True,
         )
         if ready is False:
-            if state.get("intent") == "single_tool":
+            if state.get("intent") == "single_tool" and settings.orchestrator_provider != "mock":
                 # The compatibility finding is already recorded in
                 # tool_results; let the continuation planner see it and pick
                 # a genuinely different tool (e.g. compare_images_visually)
@@ -459,7 +501,11 @@ def apply_advance(state: SatQueryState) -> dict[str, Any]:
     update["agenda_index"] = new_index
     updated_agenda = update.get("agenda", agenda)
     if new_index >= len(updated_agenda):
-        if state.get("intent") == "single_tool":
+        if (
+            state.get("intent") == "single_tool"
+            and settings.orchestrator_provider != "mock"
+            and tool_name != "fetch_web_intelligence"
+        ):
             # Don't force-finish yet -- build_plan_update will re-consult the
             # single_tool planner with this result added to tool_results, and
             # it decides whether another tool is actually needed.

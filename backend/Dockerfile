@@ -36,6 +36,7 @@ COPY Tool_5_compute_vegetation_indices/ Tool_5_compute_vegetation_indices/
 COPY Tool_6_inspect_geotiff_metadata/ Tool_6_inspect_geotiff_metadata/
 COPY Tool_7_analyze_temporal_change/ Tool_7_analyze_temporal_change/
 COPY Tool_8_analyze_spatial_landcover_terrain/ Tool_8_analyze_spatial_landcover_terrain/
+COPY Tool_9_fetch_web_intelligence/ Tool_9_fetch_web_intelligence/
 COPY satquery_workflows.py .
 COPY skills/ skills/
 

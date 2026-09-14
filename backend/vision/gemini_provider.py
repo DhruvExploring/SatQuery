@@ -1,4 +1,4 @@
-"""Vision tool backend: a hosted OpenAI-compatible vision model."""
+"""Vision tool backend: Google Gemini multimodal vision model."""
 
 from __future__ import annotations
 
@@ -10,12 +10,6 @@ from backend.config.settings import settings
 
 _MIME_BY_SUFFIX = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
-# GPT-4o is a general vision-chat model, not a dedicated grounding model
-# (e.g. Grounding DINO) -- asked plainly, it can still give a reasonable
-# *rough* bounding box for a region it's already looking at, when the
-# question is actually about locating/marking something. This system prompt
-# is what makes that box show up only for that kind of question, not every
-# answer.
 _SYSTEM_PROMPT = (
     "You are an expert satellite/aerial imagery analyst. Answer the user's "
     "question about the attached image directly and factually, in plain "
@@ -69,10 +63,6 @@ def _clean_bbox(bbox: Any) -> list[float] | None:
     return values
 
 
-# Used for compare() -- two arbitrary images, which analyze_temporal_change's
-# pixel-wise diff can't handle unless they're already grid-aligned (same CRS,
-# dimensions, transform). This is the qualitative fallback: no alignment
-# requirement, works across different sensors or even different places.
 _COMPARE_SYSTEM_PROMPT = (
     "You are an expert satellite/aerial imagery analyst. You are given two "
     "images, labeled Image A and Image B in that order. They may be the "
@@ -88,82 +78,53 @@ _COMPARE_SYSTEM_PROMPT = (
 )
 
 
-class OpenAIVisionProvider:
+class GeminiVisionProvider:
     def interpret(self, image_path: str, query: str) -> dict:
         if not settings.vision_tool_api_key:
             raise ValueError(
-                "SATQUERY_VISION_TOOL_PROVIDER=openai but no API key is set "
-                "(SATQUERY_VISION_TOOL_API_KEY or OPENAI_API_KEY)."
+                "SATQUERY_VISION_TOOL_PROVIDER=gemini but no API key is set "
+                "(SATQUERY_VISION_TOOL_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY)."
             )
 
         from langchain_core.messages import HumanMessage, SystemMessage
-        from langchain_openai import ChatOpenAI
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_core.output_parsers import JsonOutputParser
 
         path = Path(image_path)
         mime = _MIME_BY_SUFFIX.get(path.suffix.lower(), "image/png")
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
 
-        kwargs: dict = {
-            "model": settings.vision_tool_model,
-            "api_key": settings.vision_tool_api_key,
-            "temperature": 0,
-            "timeout": settings.vision_tool_timeout_s,
-        }
-        if settings.vision_tool_base_url:
-            kwargs["base_url"] = settings.vision_tool_base_url
-            if "openrouter.ai" in settings.vision_tool_base_url:
-                kwargs["default_headers"] = {
-                    "HTTP-Referer": "https://satquery.local",
-                    "X-Title": "SatQuery",
-                }
+        client = ChatGoogleGenerativeAI(
+            model=settings.vision_tool_model,
+            google_api_key=settings.vision_tool_api_key,
+            timeout=settings.vision_tool_timeout_s,
+        ) | JsonOutputParser()
+
         message = HumanMessage(
             content=[
                 {"type": "text", "text": query},
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
             ]
         )
-        try:
-            client = ChatOpenAI(**kwargs).with_structured_output(_RESPONSE_SCHEMA)
-            result: dict = client.invoke([SystemMessage(content=_SYSTEM_PROMPT), message])
-        except Exception:
-            import json
-            import re
-
-            client = ChatOpenAI(**kwargs)
-            res = client.invoke([
-                SystemMessage(
-                    content=_SYSTEM_PROMPT
-                    + "\nRespond strictly in valid JSON format with keys 'text' and 'bbox'."
-                ),
-                message,
-            ])
-            content = res.content if isinstance(res.content, str) else str(res.content)
-            match = re.search(r"\{.*\}", content, re.DOTALL)
-            if match:
-                try:
-                    result = json.loads(match.group(0))
-                except Exception:
-                    result = {"text": content, "bbox": None}
-            else:
-                result = {"text": content, "bbox": None}
+        result: dict = client.invoke([SystemMessage(content=_SYSTEM_PROMPT), message])
         return {
             "text": result.get("text") or "",
             "bbox": _clean_bbox(result.get("bbox")),
             "model": settings.vision_tool_model,
-            "provider": "openai",
+            "provider": "gemini",
         }
 
     def compare(self, image_paths: list[str], query: str) -> dict:
         if not settings.vision_tool_api_key:
             raise ValueError(
-                "SATQUERY_VISION_TOOL_PROVIDER=openai but no API key is set "
-                "(SATQUERY_VISION_TOOL_API_KEY or OPENAI_API_KEY)."
+                "SATQUERY_VISION_TOOL_PROVIDER=gemini but no API key is set "
+                "(SATQUERY_VISION_TOOL_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY)."
             )
         if len(image_paths) != 2:
             raise ValueError("compare() requires exactly two image paths.")
 
         from langchain_core.messages import HumanMessage, SystemMessage
-        from langchain_openai import ChatOpenAI
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
         content: list[dict] = [{"type": "text", "text": query}]
         for label, image_path in zip(("Image A:", "Image B:"), image_paths):
@@ -173,25 +134,16 @@ class OpenAIVisionProvider:
             content.append({"type": "text", "text": label})
             content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
 
-        kwargs: dict = {
-            "model": settings.vision_tool_model,
-            "api_key": settings.vision_tool_api_key,
-            "temperature": 0,
-            "timeout": settings.vision_tool_timeout_s,
-        }
-        if settings.vision_tool_base_url:
-            kwargs["base_url"] = settings.vision_tool_base_url
-            if "openrouter.ai" in settings.vision_tool_base_url:
-                kwargs["default_headers"] = {
-                    "HTTP-Referer": "https://satquery.local",
-                    "X-Title": "SatQuery",
-                }
-        client = ChatOpenAI(**kwargs)
+        client = ChatGoogleGenerativeAI(
+            model=settings.vision_tool_model,
+            google_api_key=settings.vision_tool_api_key,
+            timeout=settings.vision_tool_timeout_s,
+        )
 
         message = HumanMessage(content=content)
         response = client.invoke([SystemMessage(content=_COMPARE_SYSTEM_PROMPT), message])
         return {
             "text": response.content if isinstance(response.content, str) else str(response.content),
             "model": settings.vision_tool_model,
-            "provider": "openai",
+            "provider": "gemini",
         }

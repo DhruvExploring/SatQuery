@@ -534,6 +534,47 @@ def _run_visual_compare(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------
+# TOOL 9: Web Intelligence
+# ---------------------------------------------------------------------
+
+def _run_web_intelligence(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_9_fetch_web_intelligence.fetch_web_intelligence import (
+            WebIntelligenceRequest,
+            fetch_web_intelligence,
+        )
+
+        query = args.get("query") or ""
+        if not query:
+            raise ValueError("fetch_web_intelligence requires a non-empty query.")
+
+        req_kwargs: dict[str, Any] = {
+            "query": query,
+        }
+        if args.get("max_results"):
+            req_kwargs["max_results"] = int(args["max_results"])
+        if args.get("search_depth"):
+            req_kwargs["search_depth"] = args["search_depth"]
+        if args.get("location_hint"):
+            req_kwargs["location_hint"] = args["location_hint"]
+        if args.get("include_domains"):
+            req_kwargs["include_domains"] = args["include_domains"]
+        if args.get("exclude_domains"):
+            req_kwargs["exclude_domains"] = args["exclude_domains"]
+        if args.get("bbox"):
+            req_kwargs["bbox"] = args["bbox"]
+        if args.get("latitude") is not None:
+            req_kwargs["latitude"] = float(args["latitude"])
+        if args.get("longitude") is not None:
+            req_kwargs["longitude"] = float(args["longitude"])
+
+        req = WebIntelligenceRequest(**req_kwargs)
+        return fetch_web_intelligence(req)
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
 # DISPATCH TABLE
 # ---------------------------------------------------------------------
 
@@ -563,6 +604,9 @@ _EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 
     # Tool 8
     "analyze_spatial_landcover_terrain": _run_spatial_landcover_terrain,
+
+    # Tool 9
+    "fetch_web_intelligence": _run_web_intelligence,
 
     # Named science missions (satquery_workflows.py)
     "workflow_wildfire_burn_severity": _run_workflow_wildfire,

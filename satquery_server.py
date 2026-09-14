@@ -55,6 +55,10 @@ from Tool_8_analyze_spatial_landcover_terrain.analyze_spatial_landcover_terrain 
     SpatialLandcoverTerrainRequest,
     analyze_spatial_landcover_terrain,
 )
+from Tool_9_fetch_web_intelligence.fetch_web_intelligence import (
+    WebIntelligenceRequest,
+    fetch_web_intelligence,
+)
 
 if FastMCP is None:
     class _DummyMCP:
@@ -323,9 +327,40 @@ def mcp_analyze_spatial_landcover_terrain(
         return {"status": "error", "error": {"type": "service_error", "message": str(e)}}
 
 
+# =============================================================================
+# Tool 9: Web Search Intelligence & Ground Truth Context
+# =============================================================================
+@mcp.tool(
+    name="fetch_web_intelligence",
+    description="Fetch real-world ground truth, event causes (e.g. barrage water discharge, disaster context), infrastructure project names, and location background via web search (Tavily AI with automatic DuckDuckGo fail-safe fallback)."
+)
+def mcp_fetch_web_intelligence(
+    query: str,
+    max_results: int = 5,
+    search_depth: Literal["basic", "advanced"] = "basic",
+    location_hint: Optional[str] = None,
+    include_domains: Optional[List[str]] = None,
+    exclude_domains: Optional[List[str]] = None
+) -> dict:
+    try:
+        req = WebIntelligenceRequest(
+            query=query,
+            max_results=max_results,
+            search_depth=search_depth,
+            location_hint=location_hint,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains
+        )
+        return fetch_web_intelligence(req)
+    except ValueError as e:
+        return {"status": "error", "error": {"type": "validation_error", "message": str(e)}}
+    except Exception as e:
+        return {"status": "error", "error": {"type": "service_error", "message": str(e)}}
+
+
 if __name__ == "__main__":
     print("=== SatQuery Unified FastMCP Server Initialized ===")
-    print("Available Tools Registered: 8/8")
+    print("Available Tools Registered: 9/9")
     print("1. fetch_optical_imagery")
     print("2. fetch_multispectral_imagery")
     print("3. fetch_sar_imagery")
@@ -334,4 +369,5 @@ if __name__ == "__main__":
     print("6. inspect_geotiff_metadata")
     print("7. analyze_temporal_change")
     print("8. analyze_spatial_landcover_terrain")
+    print("9. fetch_web_intelligence")
     mcp.run()

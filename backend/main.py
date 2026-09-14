@@ -56,9 +56,9 @@ def _warm_up_llm_clients() -> None:
                 exc,
             )
 
-    if settings.vision_tool_enabled and settings.vision_tool_provider == "openai":
+    if settings.vision_tool_enabled and settings.vision_tool_provider in {"openai", "gemini"}:
         try:
-            logger.info("Warming up vision tool SDK import (openai)...")
+            logger.info("Warming up vision tool SDK import (%s)...", settings.vision_tool_provider)
             import langchain_openai  # noqa: F401
 
             logger.info("Vision tool SDK ready.")

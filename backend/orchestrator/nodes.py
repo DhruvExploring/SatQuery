@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,19 @@ from backend.orchestrator.synthesis import synthesize_final_answer
 from backend.tools.executor import execute_tool
 
 logger = logging.getLogger("satquery.pipeline")
+
+
+def clean_final_output(text: str) -> str:
+    """Sanitize user-facing output against internal handshake tags or prompt leakage."""
+    if not text:
+        return ""
+    # Strip multi-line or single-line thought/reasoning blocks
+    text = re.sub(r"^(?:Thought|Plan|Reasoning|Observation|Handshake):\s*[^\n]*(?:\n+|$)", "", text, flags=re.IGNORECASE)
+    # Strip handshake step markers like "Completed 2-step handshake. "
+    text = re.sub(r"^Completed \d+-step handshake\.\s*", "", text, flags=re.IGNORECASE)
+    # Strip bracketed provider prefixes like "[Tavily] " or "[DuckDuckGo (Fail-safe)] "
+    text = re.sub(r"^\[(?:Tavily|DuckDuckGo|Web)[^\]]*\]\s*", "", text, flags=re.IGNORECASE)
+    return text.strip()
 
 
 def validate_input(state: SatQueryState) -> dict[str, Any]:
@@ -326,12 +340,9 @@ def respond(state: SatQueryState) -> dict[str, Any]:
             ],
         }
 
-    prefix = ""
-    if len(results) > 1:
-        prefix = f"Completed {len(results)}-step handshake. "
-
     synthesized = synthesize_final_answer(state, results)
-    final_answer = synthesized or (prefix + format_tool_success(tool_name, latest))
+    raw_answer = synthesized or format_tool_success(tool_name, latest)
+    final_answer = clean_final_output(raw_answer)
     logger.info(
         "[ORCHESTRATOR DECISION] status=success tool=%s narrative=%s final_answer=%r",
         tool_name,

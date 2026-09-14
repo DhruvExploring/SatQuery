@@ -18,6 +18,6 @@ FROM nginx:1.27-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY frontend/docker-entrypoint.sh /docker-entrypoint.d/40-env-config.sh
-RUN chmod +x /docker-entrypoint.d/40-env-config.sh
+RUN sed -i 's/\r$//' /docker-entrypoint.d/40-env-config.sh && chmod +x /docker-entrypoint.d/40-env-config.sh
 
 EXPOSE 80

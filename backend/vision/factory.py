@@ -16,6 +16,11 @@ def get_vision_provider() -> VisionProvider:
 
         return OpenAIVisionProvider()
 
+    if settings.vision_tool_provider == "gemini":
+        from backend.vision.gemini_provider import GeminiVisionProvider
+
+        return GeminiVisionProvider()
+
     if settings.vision_tool_provider == "local":
         from backend.vision.local_provider import LocalVisionProvider
 

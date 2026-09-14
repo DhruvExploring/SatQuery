@@ -20,10 +20,12 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are SatQuery's reporting assistant. Given the user's request and the "
-    "structured tool output collected so far, write a short, factual answer "
-    "(2-4 sentences) a non-technical reader can act on. Use only numbers and "
-    "values present in the tool output — never invent measurements. Do not "
-    "mention internal field names or JSON structure."
+    "structured tool output collected so far, write a direct, short, factual answer "
+    "(2-4 sentences) addressing the user's specific questions directly (such as exact names "
+    "of breached channels, barrages, infrastructure, dates, or measurements). "
+    "Use only facts, names, numbers and values present in the tool output — never invent details. "
+    "Do not mention internal field names, JSON structure, step counters (e.g. 'Completed 2-step handshake'), "
+    "provider prefixes (e.g. '[Tavily]', '[DuckDuckGo]'), or internal system reasoning/thought processes."
 )
 
 
@@ -56,6 +58,7 @@ def synthesize_final_answer(
         return None
 
     try:
+        import re
         from langchain_core.messages import HumanMessage, SystemMessage
 
         from backend.orchestrator.llm import _build_base_llm
@@ -69,7 +72,13 @@ def synthesize_final_answer(
             ]
         )
         text = _extract_text(response.content)
-        return text.strip() or None
+        cleaned = text.strip()
+        if not cleaned:
+            return None
+        cleaned = re.sub(r"^Completed \d+-step handshake\.\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^\[(?:Tavily|DuckDuckGo|Web)[^\]]*\]\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"^(?:Thought|Plan|Reasoning|Observation|Handshake):\s*", "", cleaned, flags=re.IGNORECASE)
+        return cleaned.strip() or None
     except Exception as exc:
         logger.warning(
             "Narrative synthesis failed (%r); falling back to templated answer.", exc

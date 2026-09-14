@@ -17,6 +17,7 @@ const LABELS = {
   analyze_imagery_vlm: 'Vision analysis',
   mark_region_in_image: 'Mark region',
   compare_images_visually: 'Visual comparison',
+  fetch_web_intelligence: 'Web Intelligence',
   workflow_wildfire_burn_severity: 'Wildfire burn severity',
   workflow_flood_inundation_impact: 'Flood inundation',
   workflow_agricultural_drought_canopy_stress: 'Drought / canopy stress'

@@ -658,3 +658,96 @@ body {
 .raster-thumb span {
   text-align: center;
 }
+
+/* ---------- web intelligence card ---------- */
+
+.web-intelligence-card {
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--sunken-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.web-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.web-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-tavily {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.badge-ddg {
+  background: #ffedd5;
+  color: #c2410c;
+  border: 1px solid #fdba74;
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.web-results-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.web-sources-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.web-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 0.78rem;
+  max-width: 260px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.web-source-pill:hover {
+  border-color: var(--accent);
+  box-shadow: 0 1px 3px rgba(37, 99, 235, 0.12);
+}
+
+.web-source-icon {
+  font-size: 0.8rem;
+}
+
+.web-source-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

@@ -74,6 +74,26 @@ def _stub_execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             "request": args,
         }
 
+    if name == "fetch_web_intelligence":
+        return {
+            "status": "success",
+            "provider": "tavily",
+            "fallback_triggered": False,
+            "fallback_reason": None,
+            "query": args.get("query") or "test query",
+            "results_count": 1,
+            "summary": "Mock web intelligence summary.",
+            "results": [
+                {
+                    "title": "Mock Web Title",
+                    "url": "https://example.com/mock",
+                    "content": "Mock web intelligence content snippet.",
+                    "score": 0.95,
+                }
+            ],
+            "request": args,
+        }
+
     scene = {
         "fetch_optical_imagery": "S2_OPTICAL_MOCK",
         "fetch_multispectral_imagery": "S2_MULTI_MOCK",
