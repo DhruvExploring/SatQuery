@@ -13,19 +13,24 @@ SatQuery answers natural-language questions about a piece of land using real sat
 data. You ask something like *"Map wildfire burn severity for this area"* or *"Compute
 NDVI for this GeoTIFF"*, and SatQuery:
 
+0. **Understands the image the moment you upload it** — `POST /api/v1/upload-raster`
+   validates the file is actually a readable GeoTIFF (not just a `.tif` extension),
+   extracts its bands, centroid lat/long, and (once you wire in a geocoding backend) a
+   place name, and hands all of it back as a small per-image **knowledge base** —
+   before you've even asked a question (see §2).
 1. **Understands the request** — a planner (either a simple keyword matcher, or a real
    LLM like GPT-5.2 or Claude Sonnet 5) figures out which scientific tool(s) the
-   request needs, and — for a single-tool question — can call more than one tool in
-   sequence, gathering grounding facts or recovering from a failed call, before
-   answering (see §2).
+   request needs, and can call more than one tool in sequence — gathering grounding
+   facts or recovering from a failed call — before answering (see §2).
 2. **Fetches or reads the data** — pulls fresh Sentinel-1/Sentinel-2 satellite imagery,
    ERA5 historical *or live/forecast* weather data from public APIs, or reads a GeoTIFF
    file you already have.
 3. **Runs the science** — vegetation indices, change detection, land-cover/terrain
    analysis, burn severity, flood mapping, drought stress — all deterministic,
    unit-aware numerical computation (no LLM guessing at numbers).
-4. **Optionally looks at the picture** — an on-demand vision-language model (VLM) can
-   describe a rendered image in plain language, mark/locate a specific region with an
+4. **Looks at the picture** — if you uploaded an image, a vision-language model (VLM)
+   describes it up front, grounded in the knowledge base from step 0, before any further
+   tool is even considered. The same VLM can also mark/locate a specific region with an
    approximate bounding box, or qualitatively compare two images that aren't grid-
    aligned — via an API (OpenAI) or a model running entirely on your own machine
    (InternVL / EarthMind).
@@ -50,7 +55,7 @@ environment variable with a documented default. Nothing is hardcoded.
 4. [Configuration reference (every env var, every default)](#4-configuration-reference-every-env-var-every-default)
 5. [Repository map](#5-repository-map)
 6. [The 8 science tools + the vision tools](#6-the-8-science-tools--the-vision-tools)
-7. [Multi-tool missions (Pipelines A/B/C) and handshake chains](#7-multi-tool-missions-pipelines-abc-and-handshake-chains)
+7. [Multi-tool missions (Pipelines A/B/C)](#7-multi-tool-missions-pipelines-abc)
 8. [HTTP API reference](#8-http-api-reference)
 9. [The frontend (chat UI)](#9-the-frontend-chat-ui)
 10. [Running the project](#10-running-the-project)
@@ -70,15 +75,17 @@ environment variable with a documented default. Nothing is hardcoded.
 │   start (env-config.js), never baked into the build.                        │
 └───────────────────────────────────┬────────────────────────────────────────┘
                                      │  POST /api/v1/query(/stream), POST /api/v1/
-                                     │  upload-raster, GET /api/v1/raster-preview,
-                                     │  GET /api/v1/models, GET /health
+                                     │  upload-raster (validates + builds a per-
+                                     │  image knowledge base), GET /api/v1/
+                                     │  raster-preview, GET /api/v1/models, /health
                                      ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                      BACKEND — FastAPI + LangGraph (port 8000)               │
 │                                                                              │
-│  backend/orchestrator/  — the "brain": validate → plan → execute → advance   │
-│                            → respond (see §2). Two independent, swappable    │
-│                            model roles live here:                           │
+│  backend/orchestrator/  — the "brain": upload → ingest_graph builds a       │
+│                            knowledge base; query → validate → VLM first     │
+│                            look → tool_loop → respond (see §2). Two         │
+│                            independent, swappable model roles live here:    │
 │      • Orchestrator role  — picks the next tool, optionally writes the      │
 │                              final narrative answer. mock | openai | anthropic│
 │      • Vision-tool role   — analyze_imagery_vlm, called like any other tool  │
@@ -115,67 +122,95 @@ this — it's all env-var configuration read once at process startup.
 
 ## 2. The agent flow graph (how one request is processed)
 
-The backend is a [LangGraph](https://langchain-ai.github.io/langgraph/) state machine
-— a small graph of Python functions ("nodes") that pass a shared state dict ("clipboard")
-between each other. Every `POST /api/v1/query` runs one pass through this graph.
+The backend is two [LangGraph](https://langchain-ai.github.io/langgraph/) state
+machines, not one: a small **ingestion graph** that runs once per uploaded file, and
+a **query graph** that runs once per `POST /api/v1/query`. Both are graphs of Python
+functions ("nodes") passing a shared state dict ("clipboard") between each other.
+
+### 2.1 Upload time — `ingest_graph.py`
+
+Runs synchronously inside `POST /api/v1/upload-raster`, before the endpoint even
+returns:
+
+```mermaid
+flowchart TD
+    START([POST /api/v1/upload-raster]) --> CI[count_images]
+    CI --> IV[inspect_and_validate]
+    IV -->|invalid GeoTIFF| ERR([400: plain-text error])
+    IV -->|valid| EF[extract_fields]
+    EF --> RP[resolve_place_name]
+    RP --> BK[build_knowledge_base]
+    BK --> OK([knowledge_base in the upload response])
+```
+
+| Node | What it does |
+| :--- | :--- |
+| **count_images** | Bookkeeping only — the endpoint accepts one file per call, so this is always `1`; pair-mode uploads are just two separate calls, each building its own knowledge base. |
+| **inspect_and_validate** | Runs `inspect_geotiff_metadata` (Tool 6) on the saved file. This doubles as the validation step — if the file can't actually be opened as a raster (e.g. a renamed non-TIFF), Tool 6's own `rasterio.open()` failure surfaces here as `status: "error"`, and the endpoint returns the plain-text `"Please enter a valid GeoTIFF/TIFF file."` |
+| **extract_fields** | Pulls the band names and derives a centroid `latitude`/`longitude` from the file's own georeferenced bounds (`registry.py::derive_grounding_fields`). |
+| **resolve_place_name** | Calls `get_place_name_from_coordinates` (`backend/tools/geocode.py`, backed by Tool 10's reverse geocoding — see §6) to turn the centroid into a place name. Failing here (e.g. no network) degrades gracefully: `place_name: null`, upload still succeeds. |
+| **build_knowledge_base** | Assembles `{file_path, bands, latitude, longitude, place_name}`, writes it to disk next to the raster as `<same-stem>.kb.json`, and returns it in the upload response. |
+
+### 2.2 Query time — `graph.py`
 
 ```mermaid
 flowchart TD
     START([POST /api/v1/query]) --> V[validate]
-    V --> P[plan]
-    P -->|action = call_tool| E[execute]
-    P -->|action = clarify / chat / respond_error| R[respond]
-    E --> A[advance]
-    A -->|more steps in the agenda| P
-    A -->|agenda complete or error| R
+    V -->|input errors| R[respond]
+    V -->|ok| LKB[load_knowledge_base]
+    LKB -->|no knowledge base| DRA
+    LKB -->|knowledge base present| VLM[vlm_initial_description]
+    VLM --> DRA[describe_region_auto]
+    DRA --> TL[tool_loop subgraph]
+    TL --> R
     R --> END([JSON response])
+
+    subgraph TL2 [" "]
+        direction TB
+        SUBSTART([start]) --> LLM[llm]
+        LLM -->|action = call_tool| TOOL[tool]
+        LLM -->|clarify / chat / respond_error| SUBEND([end])
+        TOOL --> LLM
+    end
 ```
 
 | Node | What it does |
 | :--- | :--- |
 | **validate** | Checks the query isn't empty and that `bbox` / `latitude` / `longitude` are well-formed. Any problem here short-circuits straight to `respond` with an error. |
-| **plan** | On the **first** hop, classifies intent from the query text (single tool? a multi-step "chain"? a named "mission" like wildfire/flood/drought?) and builds a step-by-step **agenda**. On **later** hops for a mission/chain it just reads the next step off that agenda; for `single_tool` intent it may instead re-consult the LLM planner — see "Multi-hop continuation" below. |
-| **execute** | Calls exactly one tool with backend-computed ("trusted") arguments — the LLM planner (when enabled) only ever picks *which* tool, never fabricates coordinates, dates, thresholds, or file paths. |
-| **advance** | Records the tool's output (e.g. the GeoTIFF path it just wrote) onto the state, runs a couple of safety gates (e.g. "don't run change-detection on two rasters that aren't grid-aligned" — see Tool 6), and decides whether the agenda has another step. |
-| **respond** | Builds the final `status` + `final_answer` — either a templated string, or (when the orchestrator role is a live LLM) a short narrative synthesized from the actual tool output. |
+| **load_knowledge_base** | If `input_file` is set, loads the sibling `<stem>.kb.json` written at upload time (§2.1) onto the state. No file present → `knowledge_base: null`, nothing else changes. |
+| **vlm_initial_description** | Only runs when a knowledge base was found. Calls `analyze_imagery_vlm` with the query *plus* the knowledge base serialized as context, so the very first thing the model does is describe the image grounded in its real bands/location — not guess at them. The result is recorded both as `initial_description` and as the loop's first `tool_results` entry. |
+| **describe_region_auto** | Always runs (regardless of whether a knowledge base was found). No-ops unless a region was marked (`region_bbox` set) — see §6/§9 — in which case it deterministically crops the raster to that exact bbox, describes it, and reverse-geocodes its center, recording the result as a `tool_results` entry before the planner is even consulted. Made deterministic (not a planner choice) after observing the planner sometimes decide an existing whole-image description or earlier conversation turn already covered a *newly* marked region, silently skipping it. |
+| **tool_loop** (`tool_loop_graph.py`) | A separate compiled subgraph, embedded as a single node — see below. Decides, one hop at a time, whether another tool call is needed. |
+| **respond** | Builds the final `status` + `final_answer` — either a templated string, or (when the orchestrator role is a live LLM) a short narrative synthesized from the tool output and the initial VLM description. |
 
-This loop is capped at **10 tool hops** (`MAX_HANDSHAKE_HOPS`) so a misconfigured
-agenda can never spin forever.
+**The `tool_loop` subgraph** is the recursive `start → llm → tool → end` loop: `llm`
+consults the planner (mock keyword matcher or a live LLM, §3) for exactly one action;
+if it's `call_tool`, `tool` runs it with backend-computed ("trusted") arguments — the
+LLM only ever picks *which* tool, never fabricates coordinates, dates, thresholds, or
+file paths — and loops back to `llm` with the result folded into state. Any other
+action (`clarify`/`chat`/`respond_error`) ends the subgraph immediately and falls
+through to the outer `respond` node. This loop is capped at **10 tool hops**
+(`MAX_TOOL_HOPS` in `tool_loop_graph.py`) so a runaway plan can never spin forever.
 
-### Why "agenda" instead of "re-plan every step"?
-
-Missions like wildfire/flood/drought need several tools to run in a fixed order (e.g.
-fetch → compute index → QA-check alignment → diff → zonal breakdown). Building the
-whole agenda once up front — instead of asking an LLM "what's next?" after every single
-step — means a multi-step mission is **deterministic and auditable**, and the mock
-(no-LLM) planner can run missions exactly the same way a live GPT-5.2 orchestrator
-would. The LLM planner is only ever consulted for the `single_tool` / `chat` case.
-
-### Multi-hop continuation (`single_tool` intent only)
-
-Unlike missions/chains, a `single_tool` request isn't locked into a fixed-length
-agenda. After a tool call, `handshake.py` may re-consult the LLM planner with
-everything gathered so far (`tool_results_so_far`, including a failed call's own
-error message) before finishing, so the agent can:
-
-- **Gather more grounding before answering** — e.g. for "what place is this?", call
-  `analyze_imagery_vlm` for a visual guess, then also call `inspect_geotiff_metadata`
-  to check that guess against the file's real coordinates, rather than trusting an
-  ungrounded vision-model description on its own.
-- **Recover from a tool failure instead of giving up** — e.g. `analyze_temporal_change`
-  refuses two rasters that aren't grid-aligned; the planner sees that specific failure
-  reason on the next consultation and can fall back to `compare_images_visually`
-  (a qualitative comparison that needs no alignment) instead of just erroring out.
-
-Missions and chains keep their original fixed-agenda behavior unchanged — this
-continuation logic only applies to `single_tool` intent. It's bounded by the same
-`MAX_HANDSHAKE_HOPS` cap as everything else.
+This replaces an earlier design where a deterministic, hand-coded "agenda" drove
+multi-step missions/chains. Every request — single-tool, chained, or a named mission
+like wildfire/flood/drought — now goes through the same generic loop, with the LLM
+deciding each hop for itself, guided by routing hints in `llm.py` (e.g. "a wildfire
+request needs pre/post multispectral imagery and LULC before calling
+`workflow_wildfire_burn_severity` — fetch what's missing first"). This is simpler and
+more uniform, but it does mean mission sequencing is only as reliable as the planner's
+own reasoning — see §7's note on this trade-off. The mock/keyword planner used in tests
+(`SATQUERY_ORCHESTRATOR_PROVIDER=mock`) compensates for having no real reasoning by
+never re-selecting a tool it has already attempted in the same request, so it still
+terminates deterministically; it just can't chain *distinct* tools the way a real LLM
+can.
 
 A successful `inspect_geotiff_metadata` call also writes its derived `bbox` (and a
 centroid `latitude`/`longitude`) back onto the shared state if nothing more specific
-was already provided (`registry.py::derive_grounding_fields`) — so a later step in the
-same request (e.g. `fetch_weather_environment`) can use a location the request never
-explicitly gave it, derived instead from a file's own georeferencing.
+was already provided (`registry.py::derive_grounding_fields`) — so a later hop in the
+same request (e.g. `fetch_weather_environment`, or a fetch tool that was only missing
+a bbox) can use a location the request never explicitly gave it, derived instead from
+a file's own georeferencing.
 
 ---
 
@@ -208,10 +243,11 @@ any reason, the template is used instead — this is a safety net, not mode-swit
 
 ### Role 2 — Vision tool (`backend/vision/`) — three planner-facing tools, one backend
 
-An on-demand capability (only runs when the query or agenda calls for it) that looks at
-a **rendered PNG preview** of a GeoTIFF (or any image) and answers a question about it
-in natural language. It's exposed to the planner as three distinct tool names sharing
-the same underlying provider call:
+A capability that looks at a **rendered PNG preview** of a GeoTIFF (or any image) and
+answers a question about it in natural language — mostly on-demand (only runs when the
+query calls for it), plus the one automatic call described below (§2.2/§6). It's
+exposed to the planner as three distinct tool names sharing the same underlying
+provider call:
 
 | Tool | When it's chosen | What it adds |
 | :--- | :--- | :--- |
@@ -357,16 +393,21 @@ SatQuery/
 ├── backend/                              # FastAPI app + LangGraph orchestrator
 │   ├── main.py                           # App factory, CORS, router mounting, static frontend serving
 │   ├── config/settings.py                # All env-var-driven configuration (§4)
-│   ├── orchestrator/                     # The agent graph — see §2 and backend/orchestrator/README.md
-│   │   ├── graph.py                      # Graph wiring + invoke_satquery()
+│   ├── orchestrator/                     # The agent graphs — see §2 and backend/orchestrator/README.md
+│   │   ├── graph.py                      # Query graph wiring + invoke_satquery()
+│   │   ├── ingest_graph.py               # Upload-time graph: validate, extract, geocode, build knowledge base
+│   │   ├── tool_loop_graph.py            # The recursive start->llm->tool->end subgraph
 │   │   ├── state.py                      # SatQueryState "clipboard" TypedDict
-│   │   ├── handshake.py                  # Intent classification, agendas, mission/chain logic
-│   │   ├── registry.py                   # Tool names, keywords, trusted-arg builders
-│   │   ├── llm.py                        # Keyword or LLM single-tool planner
+│   │   ├── registry.py                   # Tool names, keywords, trusted-arg builders, derive_grounding_fields
+│   │   ├── llm.py                        # Keyword or LLM planner (single-tool AND mission tool calls)
+│   │   ├── prompts.py                    # load_prompt() — reads planner/synthesis prompt text from prompts/*.md
+│   │   ├── prompts/                      # Editable *.md prompt wording — see backend/orchestrator/README.md's lookup table
 │   │   ├── synthesis.py                  # Optional LLM-written narrative final answer
-│   │   ├── nodes.py                      # validate / plan / execute / advance / respond
+│   │   ├── nodes.py                      # validate / load_knowledge_base / vlm_initial_description / describe_region_if_marked / respond
 │   │   └── router.py                     # Conditional-edge routing logic
-│   ├── tools/executor.py                 # Dispatches to Tools 1-8, the vision tool, and the 3 pipelines
+│   ├── tools/
+│   │   ├── executor.py                   # Dispatches to Tools 1-11, the vision tool, and the 3 pipelines
+│   │   └── geocode.py                    # Reverse-geocoding adapter over Tool 10, see §6
 │   ├── vision/                           # Vision-tool provider interface (§3)
 │   │   ├── base.py, factory.py
 │   │   ├── openai_provider.py            # Hosted OpenAI-compatible vision model
@@ -403,7 +444,7 @@ SatQuery/
 │   ├── model_adapters.py                  # InternVL/EarthMind loading + preprocessing
 │   ├── requirements.txt, Dockerfile, README.md, .env.example
 │
-├── satquery_server.py                     # FastMCP server exposing all 8 tools over stdio (Claude Desktop, etc.)
+├── satquery_server.py                     # FastMCP server exposing all 11 tools over stdio (Claude Desktop, etc.)
 ├── satquery_workflows.py                  # Pipelines A/B/C (wildfire, flood, drought) — see §7
 │
 ├── Tool_1_fetch_optical_imagery/          # Sentinel-2 true-color RGB
@@ -414,6 +455,9 @@ SatQuery/
 ├── Tool_6_inspect_geotiff_metadata/       # Raster QA / grid-alignment gate (offline)
 ├── Tool_7_analyze_temporal_change/        # Before/after change detection (offline)
 ├── Tool_8_analyze_spatial_landcover_terrain/  # LULC + DEM + zonal stats (offline)
+├── Tool_9_fetch_web_intelligence/          # Web search ground truth (Tavily, DuckDuckGo fallback)
+├── Tool_10_spatial_geocoding_poi/          # Forward/reverse geocoding, scene identity, in-AOI POI discovery
+├── Tool_11_deterministic_affine_markup/    # Exact lat/long -> pixel projection + badge markup (offline)
 │   (each Tool_N/ folder: the engine .py, a .ipynb walkthrough, its own README, sample I/O, test_runs/)
 │
 ├── nepal_flood_case/                      # Real Sentinel-1 pre/post scenes, 2026 Nepal-Tibet floods (Trishuli
@@ -421,7 +465,7 @@ SatQuery/
 ├── walkthrough.ipynb                      # Guided, pre-executed tour: tool reference + 5 real orchestrator examples
 ├── playground.ipynb                       # Scratch notebook: free-text query cell + direct Tool 6/7 two-file compare cell
 │
-├── skills/                                # SkillKit definitions the LLM planner can optionally reference
+├── skills/                                # SkillKit (langchain-skillkit) SKILL.md definitions the LLM planner can reference as background
 ├── scripts/                               # run_phase2.py, verify_all_tools.py, preflight_release_audit.py, tiff_file_viewer.py
 ├── tests/                                 # pytest suite — offline, stubs execute_tool, never hits live APIs
 ├── docker-compose.yml                     # backend + frontend + optional local-vlm (profile "local-models")
@@ -432,13 +476,14 @@ SatQuery/
 
 ---
 
-## 6. The 8 science tools + the vision tools
+## 6. The 11 science tools + the vision tools
 
 Every tool is a self-contained Pydantic-in/Pydantic-out Python module — it can be
 called directly in Python, via the FastMCP server, or via the LangGraph orchestrator
 (which is what the HTTP API and the frontend use). Tools 1–4 talk to a live external
 API; Tools 5–8 are 100% offline vectorized NumPy/rasterio/SciPy — no network, no quota,
-fully deterministic.
+fully deterministic. Tools 9–10 talk to live web/geocoding APIs (each with a keyless
+fallback); Tool 11 is offline, doing only local affine math and image rendering.
 
 ### Tool 1 — Visual Optical Imagery (`fetch_optical_imagery`)
 Fetches a Sentinel-2 L2A true-color RGB GeoTIFF (bands B04/B03/B02, 10 m resolution)
@@ -493,7 +538,14 @@ The pre-flight gatekeeper: checks CRS validity, NoData consistency, NaN/Inf leak
 — when given `compare_with` — whether two rasters are numerically co-registered
 (`np.allclose` on the affine transform, `rtol=1e-5, atol=1e-8`). Emits
 `compatibility.pixelwise_operation_ready`; the orchestrator refuses to run Tool 7 on
-two rasters that fail this check.
+two rasters that fail this check. Also extracts `spatial.pixel_size_wgs84_degrees`
+(`{lon_per_pixel, lat_per_pixel}`, i.e. exactly how much lat/long changes per pixel
+step) and `spatial.corners_wgs84` (`top_left`/`top_right`/`bottom_left`/`bottom_right`,
+each `{latitude, longitude}`) — both derived directly from `bounds_wgs84` and the
+raster's own width/height, exact for the north-up rasters every tool here produces.
+This is what lets a pixel-space region (e.g. a box drawn on a rendered preview, as a
+fraction of image width/height) convert to exact real-world coordinates without any
+tool re-deriving that math itself — see `region_bbox` below.
 - **Requires:** `file_path`. **Optional:** `compare_with` for the alignment check.
 - **Offline.**
 
@@ -525,19 +577,126 @@ distinguishes the three — one general description, one that also returns an
 approximate region bounding box, one that qualitatively compares two images without
 needing them grid-aligned.
 - **Requires:** `analyze_imagery_vlm`/`mark_region_in_image`: `image_path` + `query`. `compare_images_visually`: `image_path_a` + `image_path_b` + `query`.
-- **Off by default** (`SATQUERY_VISION_TOOL_ENABLED=false`) — on-demand only, never runs automatically after a fetch.
+- **Off by default** (`SATQUERY_VISION_TOOL_ENABLED=false`). Mostly on-demand — the
+  planner calls it when a query asks for it — **except** `analyze_imagery_vlm` also
+  runs automatically once per query, before any other tool, whenever `input_file` has
+  a knowledge base on disk (§2.1/§2.2) — that one automatic call is what produces
+  `initial_description`.
+
+### Tool 9 — Web Search Ground Truth (`fetch_web_intelligence`)
+Fills the narrative gap satellite pixels can't: event causes, disaster reports,
+infrastructure project names, and other real-world background for a place or event.
+Tavily is the primary provider (synthesized AI answers); on missing/invalid key, quota
+exhaustion, or any request error it automatically fails over to the keyless DuckDuckGo
+search. Refuses queries containing prohibited meta/system-internals keywords (e.g.
+"affine transform", "numpy") — it's reserved for real-world facts, not this codebase.
+- **Requires:** `query`. **Optional:** `max_results`, `search_depth`, `location_hint`, `include_domains`/`exclude_domains`, `bbox`/`latitude`/`longitude` (added to the query as location context).
+- **External dependency:** Tavily (`TAVILY_API_KEY`) or DuckDuckGo (no key).
+
+### Tool 10 — Spatial Geocoding & POI Discovery (`spatial_geocoding_poi`)
+One engine, four modes (auto-inferred from which fields are supplied, or set
+explicitly): `forward` (place name → coordinates), `reverse` (coordinates → structured
+address), `scene_identity` (bbox → region/locality description, plus forward-geocoding
+any landmark named in the query and checking whether it actually falls inside the AOI),
+and `poi_discovery` (bbox → real-world points of interest via Overpass/OSM). LocationIQ
+is the primary provider when `LOCATIONIQ_API_KEY` is set; falls back to OpenStreetMap
+Nominatim (keyless, rate-limited) otherwise.
+- The orchestrator exposes reverse geocoding as `get_place_name_from_coordinates` (`backend/tools/geocode.py` adapts Tool 10's response shape to `{place_name, raw}`), and forward/scene-identity/POI-discovery as three separate planner tools: `geocode_place_to_coordinates`, `resolve_scene_identity`, `discover_points_of_interest`.
+- **Requires:** `query` (forward), `latitude`+`longitude` (reverse), or `bbox` (scene_identity/poi_discovery).
+- **External dependency:** LocationIQ or OpenStreetMap Nominatim/Overpass.
+
+### Tool 11 — Deterministic Affine Markup (`deterministic_affine_markup`)
+Computes the *exact* pixel location of one or more known lat/long features on a
+GeoTIFF via closed-form inverse affine transform math (OGC GeoTIFF 19-008r4) — zero
+hallucination, unlike asking a vision model to guess where something is. Draws
+numbered pill-badge markers on a rendered preview. Meant to chain after Tool 10 (get a
+landmark's coordinates) using Tool 6/the GeoTIFF's own affine transform.
+- **Requires:** `geotiff_path`, `features` (list of `{name, latitude, longitude}`). The orchestrator builds `features` from landmarks a prior `geocode_place_to_coordinates`/`resolve_scene_identity` call resolved (`registry.py::_geocoded_features_for_markup`), or falls back to the single lat/long already on state.
+- **Offline** — pure affine math + Pillow rendering, no network.
+- Prefer `mark_region_in_image` (the vision tool) instead for a vague visual region ("the flooded area") rather than a specific, geocodable landmark — this tool has zero tolerance for approximate coordinates.
+
+### The marked-region tool — `describe_marked_region`
+
+Describes exactly what's inside a region the user has already marked/drawn/selected
+on an image, grounded in that region's real coordinates rather than a whole-image
+guess. Takes `region_bbox` (WGS84, distinct from `bbox` — the whole image's own
+extent or a fetch tool's AOI), reprojects it into the raster's native CRS, computes
+the pixel window via `rasterio.windows.from_bounds` (clamped to the raster's own
+extent, so a box that slightly overshoots the edge never errors), crops just that
+window, renders it to PNG, and runs the vision model only on that crop. Also
+reverse-geocodes the region's own center for a verified `place_name` (Tool 10 via
+`backend/tools/geocode.py`), instead of leaving place identification to the vision
+model's own guess.
+- **Runs automatically, once, whenever `region_bbox` is set** — like
+  `analyze_imagery_vlm`'s initial-description call, this is a deterministic graph
+  node (`nodes.py::describe_region_if_marked`, wired in `graph.py` right after
+  knowledge-base loading, before the tool-loop planner is even consulted), not
+  something the planner has to remember to call. This was a deliberate fix: leaving
+  it to the planner's own judgment was observed in practice to sometimes skip it
+  entirely (the planner decided the whole-image description, or an earlier
+  conversation turn's answer, already covered a *newly* marked region).
+- Any other location-based tool consulted afterward in the same request prefers the
+  marked region over a plain lat/long or the whole image: `fetch_weather_environment`
+  and `get_place_name_from_coordinates` use the region's geometric center — the
+  intersection of its two diagonals, i.e. the midpoint of its min/max lat and min/max
+  lon (`registry.py::_region_center`) — and `resolve_scene_identity`/
+  `discover_points_of_interest` use `region_bbox` itself in place of `bbox`.
+- **Requires:** `input_file`, `region_bbox`. The frontend supplies `region_bbox` by
+  converting a drawn ROI box to real coordinates client-side
+  (`frontend/src/lib/geo.js::roiBoxToBbox`, using the image's own `bounds_wgs84`).
+- The vision tool must be enabled (`SATQUERY_VISION_TOOL_ENABLED=true`) for the crop
+  description half of this to run; reverse geocoding still works independently of
+  that flag.
+- **The reverse-geocoded `place_name` always wins over the vision model's own guess.**
+  The result carries both a `text` field (the vision model's description, which can
+  name a specific real-world place from visual similarity alone — and get it wrong)
+  and a `place_name` field (a verified coordinate lookup). Both the planner
+  (`prompts/planner_system.md`) and the final-answer synthesizer
+  (`prompts/synthesis_system.md`) are explicitly told `place_name` is authoritative
+  whenever the two disagree. Fixed after an observed case: a marked region correctly
+  reverse-geocoded to "Vasant Vihar Tehsil, New Delhi," but the synthesized answer
+  said "India Gate" (several km away, outside the marked region) because neither
+  prompt said which field to trust. The geocode attempt and its outcome are also
+  logged (`[REGION DESCRIBE] reverse geocode center=... place_name=...`), previously
+  silent on success.
+
+### The place-name tool — `get_place_name_from_coordinates`
+
+Reverse geocoding, backed by Tool 10 (`backend/tools/geocode.py` adapts Tool 10's
+`reverse_geocode()` response into `{place_name, raw}`, raising on failure so the
+executor's generic error wrapping reports it as a `service_error`). Registered like any
+other tool so both the upload-time knowledge-base builder (§2.1) and the query-time
+planner can call it. **Requires:** `latitude`, `longitude`.
 
 ---
 
-## 7. Multi-tool missions (Pipelines A/B/C) and handshake chains
+## 7. Multi-tool missions (Pipelines A/B/C)
 
-Beyond calling one tool at a time, the orchestrator recognizes **named missions**
-(`satquery_workflows.py`) and generic **chains** — multi-step agendas built once by
-`backend/orchestrator/handshake.py` before any tool runs (see §2). Each pipeline
+Beyond calling one tool at a time, the orchestrator can reach three **named
+mission** tools (`satquery_workflows.py`) — `workflow_wildfire_burn_severity`,
+`workflow_flood_inundation_impact`, `workflow_agricultural_drought_canopy_stress` —
+each internally running a fixed sequence of Tools 2/3/4/5/6/7/8. Each pipeline
 returns an `executive_summary`, detailed breakdowns, generated raster paths, and a
 step-by-step `audit_trail`; run standalone (outside the orchestrator) they default to
 writing intermediate artifacts under `phase2_demonstrations/<pipeline_name>/`, unless
 `output_dir` is supplied.
+
+The pipeline internals below are fixed, deterministic Python (`satquery_workflows.py`)
+— that part hasn't changed. What *has* changed is how the orchestrator gets there:
+there is no more deterministic pre-classification step that recognizes "this is a
+wildfire request" and hands it a hard-coded list of tool calls. Reaching
+`workflow_wildfire_burn_severity` now takes the **same generic `tool_loop`** (§2.2)
+as any other query — the planner has to decide, hop by hop, to fetch the pre/post
+imagery, then call the workflow tool, guided by routing-hint text in `llm.py`
+("a wildfire request needs `raster_before_path`/`raster_after_path` and
+`lulc_raster_path` before calling `workflow_wildfire_burn_severity`; fetch what's
+missing first"). A real LLM orchestrator can generally follow this; the mock/keyword
+planner used in tests can select the workflow tool via keyword match but can't gather
+its prerequisites across hops the way a real LLM can, so a mock-mode mission request
+will usually stop at `clarify` (missing inputs) rather than complete — see the note in
+§2.2. `enforce_call_tool_location` (`registry.py`) still guards every tool call,
+mission or not: a workflow tool the planner selects before its prerequisites exist
+gets downgraded to `clarify` instead of executing with a hallucinated/missing path.
 
 ```mermaid
 flowchart TD
@@ -563,24 +722,20 @@ flowchart TD
     end
 ```
 
-| Query classified as… | Trigger keywords | Agenda |
+| Mission tool | Trigger keywords (planner routing hint) | What it needs before it can run |
 | :--- | :--- | :--- |
-| `mission_wildfire` | wildfire, burn severity, fire scar | Tool 2 (T1/T2 if not already fetched) → Pipeline A (needs `lulc_raster_path`) |
-| `mission_flood` | flood, inundation | Tool 3 (T1/T2) → Pipeline B (needs `lulc_raster_path`) |
-| `mission_drought` | drought, canopy stress | Tool 2 (if no `input_file`) → Pipeline C (needs a weather location) |
-| `chain_temporal` | change detection, deforestation, before/after | Tool 2 → Tool 5 (both scenes) → Tool 6 (gate) → Tool 7 → Tool 8 (if LULC provided) |
-| `chain_indices` | NDVI, EVI, vegetation indices | Tool 2 (if no `input_file`) → Tool 5 |
-| `single_tool` | Everything else | Keyword match, or the LLM planner if enabled |
+| `workflow_wildfire_burn_severity` | wildfire, burn severity, fire scar, forest fire | `raster_before_path` + `raster_after_path` (pre/post multispectral, Tool 2), `lulc_raster_path` |
+| `workflow_flood_inundation_impact` | flood, inundation | `raster_before_path` + `raster_after_path` (pre/post SAR, Tool 3), `lulc_raster_path` (weather is added automatically inside the workflow when a location is available) |
+| `workflow_agricultural_drought_canopy_stress` | drought, canopy stress | a multispectral raster (Tool 2), plus `bbox` or `latitude`/`longitude` |
 
-Missions and chains are classified **before** single-tool keywords, so a query
-containing "flood" always routes to the full flood pipeline, never a bare Tool 3 fetch.
-If a mission needs something you haven't provided (e.g. no `lulc_raster_path`), the
-graph responds with `status: clarify` instead of guessing.
-
-`chain_temporal`'s Tool 6 gate still hard-stops the mission/chain on grid misalignment,
-unchanged. A `single_tool`-classified change question, though, can recover from that
-same failure by falling back to `compare_images_visually` instead of erroring out — see
-"Multi-hop continuation" in §2.
+These keywords route the *first* hop to the right mission tool (both for the mock
+keyword matcher and as one of the routing hints a real LLM sees) — but the tool only
+actually executes once every required input above is present; otherwise `tool_loop`
+ends the request with `status: clarify` rather than guessing or fetching hallucinated
+data. `analyze_temporal_change`, wherever it's used (mission or otherwise), still
+refuses two rasters that aren't grid-aligned (Tool 6's check) — the routing hints steer
+the planner toward `compare_images_visually` as a fallback when that happens, since a
+qualitative comparison needs no alignment.
 
 ---
 
@@ -589,9 +744,9 @@ same failure by falling back to `compare_images_visually` instead of erroring ou
 | Endpoint | Method | Purpose |
 | :--- | :--- | :--- |
 | `/health` | GET | Liveness check — `{"status": "ok"}` |
-| `/api/v1/query` | POST | The main entry point — natural-language `query` + location/file parameters → tool execution → `final_answer`. Full field list and per-tool examples in `backend/api/models.py` / the `/docs` Swagger UI. |
+| `/api/v1/query` | POST | The main entry point — natural-language `query` + location/file parameters → tool execution → `final_answer`. Response also carries `knowledge_base` and `initial_description` (§2.2) when `input_file` has an upload-time knowledge base. Full field list and per-tool examples in `backend/api/models.py` / the `/docs` Swagger UI. |
 | `/api/v1/query/stream` | POST | Same request body as `/api/v1/query`; responds as **Server-Sent Events** instead of one JSON blob — one `{"type":"step","step":{node,timestamp,summary}}` event per LangGraph node *as it actually completes* (built on `satquery_graph.stream(..., stream_mode="updates")`), then a closing `{"type":"final",...}` event with the same fields `/api/v1/query` returns. What the frontend's live Steps panel consumes. |
-| `/api/v1/upload-raster` | POST | `multipart/form-data`, field `file` — accepts only `.tif`/`.tiff`. Saves under `uploads/` with a generated filename (no path-traversal from the original name) and returns `{"path": "uploads/<uuid>.tif", ...}`, a project-relative path usable directly as `input_file`/`raster_before_path`/etc. in a later `/api/v1/query` call. |
+| `/api/v1/upload-raster` | POST | `multipart/form-data`, field `file` — accepts only a `.tif`/`.tiff` *extension* at this endpoint, then runs `ingest_graph.py` (§2.1) which actually opens the file to validate it's a real raster. On success, saves under `uploads/` with a generated filename (no path-traversal from the original name) and returns `{"path": "uploads/<uuid>.tif", "knowledge_base": {...}, ...}` — the path is usable directly as `input_file`/`raster_before_path`/etc. in a later `/api/v1/query` call, which will pick the knowledge base back up automatically from its `<uuid>.kb.json` sidecar. On failure, returns HTTP 400 with the plain-text detail `"Please enter a valid GeoTIFF/TIFF file."` |
 | `/api/v1/models` | GET | Read-only reflection of the current orchestrator/vision-tool configuration (no live model ping). |
 | `/api/v1/raster-preview` | GET | `?path=<geotiff>&size=<px>` → a rendered PNG preview (percentile-stretched, or nearest-neighbor + palette for categorical rasters). |
 | `/api/v1/raster-file` | GET | `?path=<raster>` → the raw file for download. Both raster endpoints refuse any path that resolves outside the project root (see §12). |
@@ -630,17 +785,25 @@ continuous conversation.
   left over from one mode showing up paired against a fresh upload in the other is
   exactly the kind of mix-up this prevents).
 - **Image slot(s)** (`ImageSlot.jsx`) — pick a `.tif`/`.tiff`, it uploads via
-  `POST /api/v1/upload-raster`, previews via `/api/v1/raster-preview`, and a quiet
-  background `inspect_geotiff_metadata` call runs automatically (shown as a small green
-  info chip: dimensions, band count, CRS, georeferenced) — both for the info chip
-  itself and to get the file's real `bounds_wgs84`, which the frontend then includes as
-  `bbox` in every subsequent request for that image (so e.g. a weather question about
-  an uploaded file doesn't need its location asked for separately).
+  `POST /api/v1/upload-raster`, which now also validates the file server-side and
+  returns a `knowledge_base` (bands/lat-long/place name, §2.1) stored on the slot. The
+  slot previews via `/api/v1/raster-preview`, and a quiet background
+  `inspect_geotiff_metadata` call also runs automatically (shown as a small green info
+  chip: dimensions, band count, CRS, georeferenced) — both for the info chip itself and
+  to get the file's real `bounds_wgs84`, which the frontend then includes as `bbox` in
+  every subsequent request for that image (so e.g. a weather question about an
+  uploaded file doesn't need its location asked for separately).
   - **Drag on the preview to mark a region** — converts the drawn box into a real
-    lat/lon sub-bbox (using that same `bounds_wgs84`) and appends it to the question
-    text sent to the vision tool, e.g. *"(Focus specifically on the region roughly
-    bounded by 85.15–85.21°E, 27.95–28.01°N.)"* — a visual "point at this" affordance
-    for a backend that has no native concept of a pixel region.
+    lat/lon sub-bbox (using that same `bounds_wgs84`) and sends it two ways: as plain
+    text appended to the question (*"(Focus specifically on the region roughly bounded
+    by 85.15–85.21°E, 27.95–28.01°N.)"*, rounded, for a human-readable trace) **and**
+    as the structured `region_bbox` field, at full precision — the backend has a real
+    concept of a marked region (`describe_marked_region`, §6), not just a text hint: it
+    crops the actual GeoTIFF's own pixels to that exact bbox and describes only that
+    crop, plus reverse-geocodes the region's center for a verified place name, runs
+    automatically once per request whenever a region is marked, and other location
+    tools consulted afterward (weather, place lookup, scene identity, POI discovery)
+    prefer that marked region over the whole image.
   - **The AI's own answer can mark a region back** — when `mark_region_in_image`
     returns a `bbox` (see §3), it's drawn as a second, visually distinct (solid violet,
     tagged "AI") overlay box — suppressed for a turn where you already drew your own
@@ -649,7 +812,11 @@ continuous conversation.
 - **Steps** — the current turn's `execution_trace`, rendered as a vertical, animated
   chain of connected step nodes (green/red/amber by outcome) — see the streaming note
   below. Structured labels only (e.g. "Plan: use Vision analysis", "Run GeoTIFF
-  inspection"), never the raw LLM planner-reasoning text.
+  inspection"), never the raw LLM planner-reasoning text. Every graph node shows up
+  here — none are dropped or filtered — in the same order and at the same time the
+  backend console prints its own `[STEP] <node>: <summary>` line for it (both come from
+  the single `trace_entry()` call every node makes; see backend/orchestrator/README.md's
+  "Every graph step" section).
 
 **Chat log (right):** a normal message thread. Two-image mode's general questions are
 answered using image B (the "after"/comparison slot); explicit before/after wording
@@ -768,11 +935,18 @@ setting `SENTINEL_CLIENT_ID`/`SENTINEL_CLIENT_SECRET` in its `env` block.
 python -m pytest tests -q
 ```
 
-The suite is fully offline: `tests/conftest.py` globally stubs `execute_tool` so tool
-tests never hit Sentinel Hub/Open-Meteo, and `SATQUERY_ORCHESTRATOR_PROVIDER=mock` is
-forced for the whole session so planner tests are deterministic and free. Tests cover
-graph routing, the handshake/agenda logic, registry keyword matching, the vision tool's
-dispatch and error paths (with a stubbed provider), and GeoTIFF-preview rendering.
+The suite is fully offline: `tests/conftest.py` globally stubs `execute_tool` (patched
+onto every module that imported it separately — `nodes.py`, `tool_loop_graph.py`,
+`ingest_graph.py`) so tool tests never hit Sentinel Hub/Open-Meteo, and
+`SATQUERY_ORCHESTRATOR_PROVIDER=mock` is forced for the whole session so planner tests
+are deterministic and free. Tests cover: the query graph's routing (`test_router.py`,
+`test_graph_mock.py`), the recursive `tool_loop` subgraph including the max-hops cap
+(`test_tool_loop_graph.py`, using a scripted planner since chaining distinct tools is
+now up to the LLM rather than a fixed agenda — see §2.2), the upload-time ingestion
+graph (`test_ingest_graph.py` — valid file, invalid file, geocoding-fails-gracefully),
+the end-to-end upload→query→VLM-description flow (`test_upload_flow.py`), registry
+keyword matching, the vision tool's dispatch and error paths (with a stubbed
+provider), and GeoTIFF-preview rendering.
 
 ---
 
@@ -806,7 +980,7 @@ SatQuery is released under the **MIT License**.
 ```
 
 Further reading: [backend/orchestrator/README.md](backend/orchestrator/README.md) (deep
-dive on the graph/handshake internals), [local_model_server/README.md](local_model_server/README.md)
+dive on the ingest/query graph internals), [local_model_server/README.md](local_model_server/README.md)
 (local VLM hardware/setup details), `docs/SatQuery_Orchestration_Guide.pdf` (walkthrough),
 and each `Tool_N_.../README_Tool_N_....md` for that tool's full scientific formulas and
 sample I/O.

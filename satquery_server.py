@@ -1,6 +1,6 @@
 """SatQuery Unified FastMCP Production Server.
 
-Exposes the complete 8-Tool Earth Observation & Spatial Intelligence Suite
+Exposes the complete 11-Tool Earth Observation & Spatial Intelligence Suite
 under a single unified FastMCP interface with comprehensive validation and error trapping.
 """
 
@@ -54,6 +54,19 @@ from Tool_7_analyze_temporal_change.analyze_temporal_change import (
 from Tool_8_analyze_spatial_landcover_terrain.analyze_spatial_landcover_terrain import (
     SpatialLandcoverTerrainRequest,
     analyze_spatial_landcover_terrain,
+)
+from Tool_9_fetch_web_intelligence.fetch_web_intelligence import (
+    WebIntelligenceRequest,
+    fetch_web_intelligence,
+)
+from Tool_10_spatial_geocoding_poi.spatial_geocoding_poi import (
+    SpatialGeocodingRequest,
+    fetch_spatial_geocoding_poi,
+)
+from Tool_11_deterministic_affine_markup.deterministic_affine_markup import (
+    AffineMarkupRequest,
+    FeatureItem,
+    project_and_markup_raster,
 )
 
 if FastMCP is None:
@@ -323,9 +336,117 @@ def mcp_analyze_spatial_landcover_terrain(
         return {"status": "error", "error": {"type": "service_error", "message": str(e)}}
 
 
+# =============================================================================
+# Tool 9: Ground Truth, Event Context & Geospatial Web Intelligence
+# =============================================================================
+@mcp.tool(
+    name="fetch_web_intelligence",
+    description="Fetch ground-truth real-world context, event causes, disaster reports, infrastructure project names, and location background via web search (Tavily AI with automatic DuckDuckGo fail-safe fallback)."
+)
+def mcp_fetch_web_intelligence(
+    query: str,
+    max_results: int = 5,
+    search_depth: Literal["basic", "advanced"] = "basic",
+    include_domains: Optional[list[str]] = None,
+    exclude_domains: Optional[list[str]] = None,
+    location_hint: Optional[str] = None,
+    bbox: Optional[list[float]] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+) -> dict:
+    try:
+        req = WebIntelligenceRequest(
+            query=query,
+            max_results=max_results,
+            search_depth=search_depth,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+            location_hint=location_hint,
+            bbox=bbox,
+            latitude=latitude,
+            longitude=longitude,
+        )
+        return fetch_web_intelligence(req)
+    except ValueError as e:
+        return {"status": "error", "error": {"type": "validation_error", "message": str(e)}}
+    except Exception as e:
+        return {"status": "error", "error": {"type": "service_error", "message": str(e)}}
+
+
+# =============================================================================
+# Tool 10: Spatial Geocoding & POI Discovery Engine
+# =============================================================================
+@mcp.tool(
+    name="spatial_geocoding_poi",
+    description="Forward & reverse geocoding, scene identity resolution, and in-AOI POI discovery -- mode is inferred automatically from whichever of query/latitude+longitude/bbox is supplied, or set explicitly."
+)
+def mcp_spatial_geocoding_poi(
+    mode: Literal["forward", "reverse", "scene_identity", "poi_discovery", "auto"] = "auto",
+    query: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    bbox: Optional[list[float]] = None,
+    geotiff_path: Optional[str] = None,
+    poi_categories: Optional[list[str]] = None,
+    max_results: int = 15,
+    zoom: Optional[int] = None,
+    viewbox_clamping: bool = True,
+) -> dict:
+    try:
+        req = SpatialGeocodingRequest(
+            mode=mode,
+            query=query,
+            latitude=latitude,
+            longitude=longitude,
+            bbox=bbox,
+            geotiff_path=geotiff_path,
+            poi_categories=poi_categories,
+            max_results=max_results,
+            zoom=zoom,
+            viewbox_clamping=viewbox_clamping,
+        )
+        return fetch_spatial_geocoding_poi(req)
+    except ValueError as e:
+        return {"status": "error", "error": {"type": "validation_error", "message": str(e)}}
+    except Exception as e:
+        return {"status": "error", "error": {"type": "service_error", "message": str(e)}}
+
+
+# =============================================================================
+# Tool 11: Deterministic Affine Projector & Markup Engine
+# =============================================================================
+@mcp.tool(
+    name="deterministic_affine_markup",
+    description="Deterministic inverse affine coordinate projection and high-contrast visual badge markup -- projects known lat/long features onto a GeoTIFF's exact pixel grid with zero hallucination probability."
+)
+def mcp_deterministic_affine_markup(
+    geotiff_path: str,
+    features: list[dict[str, Any]],
+    base_image_path: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    draw_pill_badges: bool = True,
+    draw_bounding_boxes: bool = True,
+) -> dict:
+    try:
+        feature_objects = [FeatureItem(**f) for f in features]
+        req = AffineMarkupRequest(
+            geotiff_path=geotiff_path,
+            features=feature_objects,
+            base_image_path=base_image_path,
+            output_dir=output_dir,
+            draw_pill_badges=draw_pill_badges,
+            draw_bounding_boxes=draw_bounding_boxes,
+        )
+        return project_and_markup_raster(req)
+    except ValueError as e:
+        return {"status": "error", "error": {"type": "validation_error", "message": str(e)}}
+    except Exception as e:
+        return {"status": "error", "error": {"type": "service_error", "message": str(e)}}
+
+
 if __name__ == "__main__":
     print("=== SatQuery Unified FastMCP Server Initialized ===")
-    print("Available Tools Registered: 8/8")
+    print("Available Tools Registered: 11/11")
     print("1. fetch_optical_imagery")
     print("2. fetch_multispectral_imagery")
     print("3. fetch_sar_imagery")
@@ -334,4 +455,7 @@ if __name__ == "__main__":
     print("6. inspect_geotiff_metadata")
     print("7. analyze_temporal_change")
     print("8. analyze_spatial_landcover_terrain")
+    print("9. fetch_web_intelligence")
+    print("10. spatial_geocoding_poi")
+    print("11. deterministic_affine_markup")
     mcp.run()

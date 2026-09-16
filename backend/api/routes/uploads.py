@@ -13,6 +13,8 @@ from pathlib import Path
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, UploadFile
 
+from backend.orchestrator.ingest_graph import run_ingest
+
 router = APIRouter()
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -52,8 +54,14 @@ async def upload_raster(file: UploadFile) -> dict:
         destination.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
 
+    ingest_result = run_ingest(str(destination))
+    if not ingest_result["ok"]:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=ingest_result["error"])
+
     return {
         "path": f"uploads/{safe_name}",
         "original_filename": original_name,
         "size_bytes": size,
+        "knowledge_base": ingest_result["knowledge_base"],
     }

@@ -1,0 +1,14 @@
+{
+  "mode": "scene_identity",
+  "bbox": [
+    77.20,
+    28.62,
+    77.28,
+    28.68
+  ],
+  "poi_categories": [
+    "tourism",
+    "historic"
+  ],
+  "max_results": 10
+}

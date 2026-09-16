@@ -14,17 +14,12 @@ import logging
 from typing import Any
 
 from backend.config.settings import settings
+from backend.orchestrator.prompts import load_prompt
 from backend.orchestrator.state import SatQueryState
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = (
-    "You are SatQuery's reporting assistant. Given the user's request and the "
-    "structured tool output collected so far, write a short, factual answer "
-    "(2-4 sentences) a non-technical reader can act on. Use only numbers and "
-    "values present in the tool output — never invent measurements. Do not "
-    "mention internal field names or JSON structure."
-)
+_SYSTEM_PROMPT = load_prompt("synthesis_system")
 
 
 def _extract_text(content: Any) -> str:
@@ -61,7 +56,11 @@ def synthesize_final_answer(
         from backend.orchestrator.llm import _build_base_llm
 
         client = _build_base_llm()
-        context = {"query": state.get("query"), "tool_results": tool_results}
+        context = {
+            "query": state.get("query"),
+            "initial_description": state.get("initial_description"),
+            "tool_results": tool_results,
+        }
         response = client.invoke(
             [
                 SystemMessage(content=_SYSTEM_PROMPT),

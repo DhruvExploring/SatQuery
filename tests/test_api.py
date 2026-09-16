@@ -122,8 +122,10 @@ def test_query_no_suitable_scene_returns_404(monkeypatch):
 
     monkeypatch.setattr(tools_executor, "execute_tool", _empty)
     import backend.orchestrator.nodes as nodes
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
 
     monkeypatch.setattr(nodes, "execute_tool", _empty)
+    monkeypatch.setattr(tool_loop_graph, "execute_tool", _empty)
 
     resp = client.post(
         "/api/v1/query",
@@ -148,8 +150,10 @@ def test_query_upstream_tool_failure_returns_502(monkeypatch):
 
     monkeypatch.setattr(tools_executor, "execute_tool", _fail)
     import backend.orchestrator.nodes as nodes
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
 
     monkeypatch.setattr(nodes, "execute_tool", _fail)
+    monkeypatch.setattr(tool_loop_graph, "execute_tool", _fail)
 
     resp = client.post(
         "/api/v1/query",
@@ -245,6 +249,31 @@ def test_query_tool8_landcover_succeeds():
     assert body["plan"]["args"]["dem_raster_path"] == "dummy_dem.tif"
 
 
+def test_query_against_uploaded_image_returns_kb_and_initial_description(tmp_path):
+    import json
+
+    input_file = tmp_path / "scene.tif"
+    input_file.write_bytes(b"")
+    knowledge_base = {
+        "file_path": str(input_file),
+        "bands": ["B02", "B03"],
+        "latitude": 28.6,
+        "longitude": 77.2,
+        "place_name": "New Delhi, India",
+    }
+    (tmp_path / "scene.kb.json").write_text(json.dumps(knowledge_base))
+
+    resp = client.post(
+        "/api/v1/query",
+        json={"query": "Tell me about this scene", "input_file": str(input_file)},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["knowledge_base"] == knowledge_base
+    assert body["initial_description"] == "A mock description of the image."
+
+
 def test_query_import_error_returns_500(monkeypatch):
     def _fail(_name, _args):
         return {
@@ -257,8 +286,10 @@ def test_query_import_error_returns_500(monkeypatch):
 
     monkeypatch.setattr(tools_executor, "execute_tool", _fail)
     import backend.orchestrator.nodes as nodes
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
 
     monkeypatch.setattr(nodes, "execute_tool", _fail)
+    monkeypatch.setattr(tool_loop_graph, "execute_tool", _fail)
 
     resp = client.post(
         "/api/v1/query",

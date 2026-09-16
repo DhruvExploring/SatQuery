@@ -1,0 +1,19 @@
+{
+  "geotiff_path": "uploads/delhi_sample.tif",
+  "features": [
+    {
+      "name": "Red Fort",
+      "latitude": 28.6562,
+      "longitude": 77.2410,
+      "category": "historic"
+    },
+    {
+      "name": "Jama Masjid",
+      "latitude": 28.6507,
+      "longitude": 77.2334,
+      "category": "place_of_worship"
+    }
+  ],
+  "draw_pill_badges": true,
+  "draw_bounding_boxes": true
+}

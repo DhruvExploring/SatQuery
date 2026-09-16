@@ -43,7 +43,7 @@ export async function uploadRasterFile(file) {
   if (!res.ok) {
     return { ok: false, error: body?.detail || `Upload failed (HTTP ${res.status})` };
   }
-  return { ok: true, path: body?.path };
+  return { ok: true, path: body?.path, knowledgeBase: body?.knowledge_base || null };
 }
 
 /**

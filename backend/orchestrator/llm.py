@@ -1,4 +1,4 @@
-"""SatQuery planner for Tools 1-8.
+"""SatQuery planner for Tools 1-11.
 
 The model selects the tool; trusted arguments are always produced by the backend.
 The OpenAI/Claude toggle from the existing project is preserved.
@@ -26,6 +26,7 @@ from backend.orchestrator.registry import (
     match_tool_from_query,
     trusted_args_for_tool,
 )
+from backend.orchestrator.prompts import load_prompt
 from backend.orchestrator.state import Plan, SatQueryState
 
 logger = logging.getLogger(__name__)
@@ -33,121 +34,36 @@ logger = logging.getLogger(__name__)
 _TOOL_LINES = "\n".join(f"  - {n}: {d}" for n, d in TOOL_REGISTRY.items())
 _PLANNER_TOOL_NAMES = list(TOOL_REGISTRY.keys())
 
-# Shared by both system prompts below so a routing hint can never be added to
-# one and silently missing from the other (see llm.py::plan_single_tool for
-# which prompt is actually live: SkillKit's whenever skills/ exists).
-_ROUTING_HINTS = """Routing hints:
-- Sentinel-2 RGB / visual / optical → fetch_optical_imagery
-- Sentinel-2 multispectral / bands / vegetation analysis fetch → fetch_multispectral_imagery
-- Sentinel-1 / SAR / radar → fetch_sar_imagery
-- rainfall / weather / temperature, past OR current OR forecast ("right now",
-  "today's weather", "forecast for the next few days") → fetch_weather_environment.
-  It automatically serves historical, current, or short-range-forecast
-  conditions depending on the dates involved -- it is not archive-only, so
-  never decline or hedge on a live/current/forecast weather request.
-- compute_vegetation_indices works on a multispectral GeoTIFF.
-- inspect_geotiff_metadata works on any GeoTIFF.
-- analyze_temporal_change compares two GeoTIFF rasters, but only as a
-  pixel-wise numeric diff -- it requires the two rasters to already be
-  grid-aligned (same CRS, dimensions, and transform; it will refuse
-  otherwise). For a general "what's different / how do these compare"
-  question, or whenever the two rasters might be a different sensor,
-  resolution, or even a different place entirely, use
-  compare_images_visually instead -- a qualitative vision-model comparison
-  that never requires alignment. If analyze_temporal_change fails because
-  the rasters are misaligned, that failure will be in your context on the
-  next consultation — choose compare_images_visually then instead of
-  repeating the same failing call.
-- analyze_spatial_landcover_terrain analyzes LULC and optionally DEM/change mask.
-- Any request to describe, interpret, or say what an image/GeoTIFF visually
-  shows (e.g. "describe this image", "what does this look like", "what do
-  you see") → analyze_imagery_vlm. Prefer this over inspect_geotiff_metadata
-  whenever the user wants a visual description of scene content, even for a
-  multi-band scientific GeoTIFF — the tool renders a viewable preview itself.
-  inspect_geotiff_metadata is for file/CRS/statistics metadata, not a visual
-  description.
-- A request to locate, mark, point out, circle, highlight, or draw a box
-  around a specific region, object, or feature in an image (e.g. "mark the
-  flooded area", "where is the river", "highlight the burned region") →
-  mark_region_in_image, not analyze_imagery_vlm. It returns the same kind of
-  description plus an approximate bounding box for where that thing is — a
-  rough visual estimate, not a precise measurement. Use analyze_imagery_vlm
-  for a general description/interpretation that isn't about locating
-  something specific.
-- A request to fetch/get/download a specific sensor's imagery (optical,
-  multispectral, or SAR) always routes to that fetch_* tool — fetch_sar_imagery
-  for "get/show/fetch the SAR image", fetch_optical_imagery for "get the
-  optical/RGB image", etc. — even when a GeoTIFF is already present in the
-  request. An uploaded/existing file is never a substitute for actually
-  fetching a different sensor's data, and its presence must NOT redirect the
-  request to analyze_imagery_vlm or inspect_geotiff_metadata instead. Only
-  choose analyze_imagery_vlm when the user wants a description/interpretation
-  of imagery that already exists, not when they're asking to obtain new
-  imagery of a given type. If that fetch tool is missing only a bbox, still
-  choose it — the backend can derive the bbox from an uploaded file's own
-  bounds; do not avoid the tool or substitute a different one for this
-  reason.
+# The entire planner prompt -- identity, rules, tool list, routing hints, and
+# where the continuation note plugs in -- lives in one editable file,
+# backend/orchestrator/prompts/planner_system.md, so it can be edited without
+# touching this code. Used whether or not SkillKit is active: it already
+# tells the model how to treat Skill/SkillRead tools if they're bound (see
+# _build_skillkit below), so there's no separate skillkit-only prompt file to
+# keep in sync.
+#
+# {{CONTINUATION_NOTE}} is only filled in when tool_results_so_far is
+# non-empty, i.e. this is a continuation call after at least one tool has
+# already run for this same request -- see plan_single_tool. On a fresh
+# request (no prior results), `chat` means "this needs no remote-sensing tool
+# at all." On a continuation it means something different (see
+# continuation_suffix.md), so it's spelled out explicitly only then rather
+# than left ambiguous on every hop.
+_CONTINUATION_NOTE = load_prompt("continuation_suffix")
 
-You are not limited to a single tool call per request. If one tool's output
-is not enough to answer confidently, you may be consulted again after it
-runs, with everything gathered so far included in your context — use that to
-decide whether to gather more information with another tool before you
-answer. This includes recovering from a tool that failed: a failed call's
-error message will be in your context on the next consultation too, so
-diagnose why it failed and choose a genuinely different, more appropriate
-tool instead of retrying the exact same call with the same inputs. Ground any objectively verifiable claim (a specific real-world place,
-coordinates, measurements, dates) in the tool built to produce that fact
-rather than a guess: analyze_imagery_vlm describes visual scene content, but
-it cannot reliably identify a specific real-world place, address, or name
-from pixels alone, and its guess must never be treated as authoritative on
-its own. When a request asks you to identify or confirm where a place is,
-call inspect_geotiff_metadata as well to get the file's real georeferenced
-coordinates (bounds_wgs84) and let those, not a vision model's guess, ground
-the final answer. Do not call the same tool for the same purpose more than
-once, and stop gathering as soon as you have enough to answer confidently."""
+SYSTEM_PROMPT = load_prompt(
+    "planner_system",
+    TOOL_NAMES=", ".join(_PLANNER_TOOL_NAMES),
+    TOOL_LINES=_TOOL_LINES,
+    CONTINUATION_NOTE="",
+)
 
-STATIC_SYSTEM_PROMPT = f"""You are the planner for SatQuery, a remote-sensing AI assistant.
-
-Choose exactly one action: call_tool, clarify, chat, respond_error.
-The tool field must be exactly one of these registered names, copied verbatim:
-{', '.join(_PLANNER_TOOL_NAMES)}
-
-Never invent names (not Sentinelimagery, SentinelHub_Search, Skill names, or API names).
-Do not execute tools and do not invent file paths, coordinates, dates, raster
-parameters or credentials. The backend supplies trusted arguments.
-
-Available tools:
-{_TOOL_LINES}
-
-{_ROUTING_HINTS}
-
-Return JSON with action, tool, args, reason. Set args to {{}}.
-"""
-
-SKILLKIT_SYSTEM_PROMPT = f"""You are the SatQuery planner.
-Use Skill/SkillRead only as background. The tool field must still be exactly one
-of: {', '.join(_PLANNER_TOOL_NAMES)}.
-Never execute a tool, never invent file paths or parameters, and never return
-Sentinel Hub / Skill / API identifiers as the tool name.
-The backend supplies trusted arguments. Return action, tool, args, reason.
-
-{_ROUTING_HINTS}
-"""
-
-# Appended only when tool_results_so_far is non-empty, i.e. this is a
-# continuation call after at least one tool has already run for this same
-# request -- see plan_single_tool. On a fresh request (no prior results),
-# `chat` means "this needs no remote-sensing tool at all." Here it means
-# something different, so it's spelled out explicitly rather than left
-# ambiguous between the two call sites.
-_CONTINUATION_SUFFIX = """
-You have already gathered one or more tool results for this same request
-(see tool_results_so_far in the Context below) and are being asked whether to
-continue. If another tool call would meaningfully ground or improve the
-answer, return action=call_tool for it as usual. If what's gathered is
-already enough to answer confidently, return action=chat -- in this
-follow-up context that means "stop gathering, finalize the answer from what
-has been collected," not "this request needs no tool at all.\""""
+SYSTEM_PROMPT_WITH_CONTINUATION = load_prompt(
+    "planner_system",
+    TOOL_NAMES=", ".join(_PLANNER_TOOL_NAMES),
+    TOOL_LINES=_TOOL_LINES,
+    CONTINUATION_NOTE=_CONTINUATION_NOTE,
+)
 
 # Aliases the model may copy from older skills or Sentinel Hub docs.
 _LLM_TOOL_ALIASES = {
@@ -280,17 +196,37 @@ def _keyword_plan(state: SatQueryState) -> Plan:
     if not tool:
         return {"action": "chat", "tool": None, "args": {}, "reason": "Query does not match a registered remote-sensing tool."}
 
+    # Unlike the real LLM planner, this keyword matcher has no notion of
+    # "what have I already gathered/tried" -- it would otherwise re-select
+    # the same tool on every continuation hop (the query text never
+    # changes) and spin until MAX_TOOL_HOPS, whether that tool succeeded
+    # (nothing left to do) or failed (retrying identically can't help).
+    # Attempt each keyword-matched tool at most once.
+    already_attempted = {r.get("tool") for r in (state.get("tool_results") or [])}
+    if tool in already_attempted:
+        # Keep `tool`/`args` on the stop signal (unlike the "no tool ever
+        # needed" case below) so callers/API consumers can still see which
+        # tool actually ran and what it was called with, instead of it
+        # reading back None/{}.
+        return {
+            "action": "chat",
+            "tool": tool,
+            "args": trusted_args_for_tool(tool, state),
+            "reason": f"{tool} already attempted.",
+        }
+
     planned: Plan = {"action": "call_tool", "tool": tool, "args": trusted_args_for_tool(tool, state), "reason": reason}
     return enforce_call_tool_location(planned, state)
 
 def _llm_plan(state: SatQueryState) -> Plan:
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    system_prompt = SKILLKIT_SYSTEM_PROMPT if _build_skillkit() is not None else STATIC_SYSTEM_PROMPT
     tool_results = state.get("tool_results") or []
+    system_prompt = SYSTEM_PROMPT_WITH_CONTINUATION if tool_results else SYSTEM_PROMPT
     context = {
         "query": state.get("query", ""),
         "bbox": state.get("bbox"),
+        "region_bbox": state.get("region_bbox"),
         "latitude": state.get("latitude"),
         "longitude": state.get("longitude"),
         "start_date": state.get("start_date"),
@@ -306,7 +242,6 @@ def _llm_plan(state: SatQueryState) -> Plan:
         "validation_errors": state.get("errors") or [],
     }
     if tool_results:
-        system_prompt = system_prompt + "\n" + _CONTINUATION_SUFFIX
         context["tool_results_so_far"] = [
             {"tool": r.get("tool"), "result": r.get("result")} for r in tool_results
         ]
@@ -331,13 +266,21 @@ def _llm_plan(state: SatQueryState) -> Plan:
             # A continuation call returning "chat" means "I have enough to
             # answer now," not "no tool was ever needed" -- relabel so
             # `respond()` falls through to its ordinary tool_results
-            # synthesis path instead of its canned chat-only reply.
-            return {"action": "finish", "tool": None, "args": {}, "reason": result.get("reason", "")}
+            # synthesis path instead of its canned chat-only reply. Keep
+            # `tool`/`args` pointing at the last tool that actually ran (not
+            # None/{}) so callers can still see what produced the answer.
+            last_tool = tool_results[-1].get("tool")
+            return {
+                "action": "finish",
+                "tool": last_tool,
+                "args": trusted_args_for_tool(last_tool, state) if last_tool else {},
+                "reason": result.get("reason", ""),
+            }
         planned: Plan = {"action": action, "tool": None, "args": {}, "reason": result.get("reason", "")}
         return enforce_call_tool_location(planned, state)
 
     resolved = resolve_llm_tool(tool)
-    if resolved is None or resolved not in TOOL_SPEC or resolved.startswith("workflow_"):
+    if resolved is None or resolved not in TOOL_SPEC:
         logger.warning(
             "LLM selected unknown tool %r; falling back to keyword planner.",
             tool,
@@ -373,6 +316,7 @@ def plan_single_tool(state: SatQueryState) -> Plan:
 
 
 def make_plan(state: SatQueryState) -> Plan:
-    from backend.orchestrator.handshake import build_plan_update
-
-    return build_plan_update(state, plan_single_tool)["plan"]
+    """Thin single-hop convenience wrapper around plan_single_tool -- the
+    tool-loop subgraph (tool_loop_graph.py) is what actually drives
+    multi-hop planning at query time."""
+    return plan_single_tool(state)

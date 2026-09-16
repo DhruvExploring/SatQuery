@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from operator import add
 from typing import Annotated, Any, Literal, TypedDict
 from typing_extensions import NotRequired
+
+_graph_logger = logging.getLogger("satquery.graph")
 
 
 PlanAction = Literal["call_tool", "clarify", "chat", "respond_error", "finish"]
@@ -40,6 +43,10 @@ class SatQueryState(TypedDict):
     bbox: NotRequired[list[float] | None]
     latitude: NotRequired[float | None]
     longitude: NotRequired[float | None]
+    # A user-marked sub-region of input_file, in WGS84 [min_lon, min_lat,
+    # max_lon, max_lat] -- distinct from `bbox` (the AOI for fetch tools /
+    # an uploaded image's own full extent). See TOOL_DESCRIBE_REGION.
+    region_bbox: NotRequired[list[float] | None]
 
     start_date: NotRequired[str | None]
     end_date: NotRequired[str | None]
@@ -78,14 +85,21 @@ class SatQueryState(TypedDict):
     last_change_mask_path: NotRequired[str | None]
     index_before_path: NotRequired[str | None]
     index_after_path: NotRequired[str | None]
-    intent: NotRequired[str | None]
-    agenda: NotRequired[list[dict[str, Any]]]
-    agenda_index: NotRequired[int]
-    handshake_complete: NotRequired[bool]
-    handshake_hops: NotRequired[int]
+    tool_hops: NotRequired[int]
     class_legend: NotRequired[dict[int, str] | None]
     zone_legend: NotRequired[dict[int, str] | None]
     calculate_fragmentation: NotRequired[bool]
+
+    # Upload-time knowledge base (bands/lat/long/place_name) and the VLM's
+    # first-pass description grounded in it -- see ingest_graph.py.
+    knowledge_base: NotRequired[dict[str, Any] | None]
+    initial_description: NotRequired[str | None]
+
+    # Tool 9-11 inputs/outputs
+    poi_categories: NotRequired[list[str] | None]
+    # Landmarks resolved by geocode_place_to_coordinates/resolve_scene_identity
+    # (name/latitude/longitude), fed to deterministic_affine_markup's `features`.
+    geocoded_landmarks: NotRequired[list[dict[str, Any]]]
 
     plan: NotRequired[Plan | None]
 
@@ -98,7 +112,18 @@ class SatQueryState(TypedDict):
 
 
 def trace_entry(node: str, summary: str) -> ExecutionTraceEntry:
-    """Create a trace entry without exposing secrets."""
+    """Create a trace entry without exposing secrets.
+
+    Every node in every graph (query graph, ingest graph, tool_loop
+    subgraph) builds its execution_trace update by calling this, so logging
+    it here -- once, at the single point every step already passes through
+    -- guarantees the console shows every graph step in real time, in the
+    same order and with the same content the frontend's StepTimeline
+    receives over SSE (run_query_stream yields one `step` event per
+    execution_trace entry as each node completes). No node can add a step
+    that's visible in one place but not the other.
+    """
+    _graph_logger.info("[STEP] %s: %s", node, summary)
     return {
         "node": node,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -113,6 +138,7 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
         "bbox": None,
         "latitude": None,
         "longitude": None,
+        "region_bbox": None,
         "start_date": None,
         "end_date": None,
         "post_start_date": None,
@@ -148,14 +174,14 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
         "last_change_mask_path": None,
         "index_before_path": None,
         "index_after_path": None,
-        "intent": None,
-        "agenda": [],
-        "agenda_index": 0,
-        "handshake_complete": False,
-        "handshake_hops": 0,
+        "tool_hops": 0,
         "class_legend": None,
         "zone_legend": None,
         "calculate_fragmentation": True,
+        "knowledge_base": None,
+        "initial_description": None,
+        "poi_categories": None,
+        "geocoded_landmarks": [],
         "plan": None,
         "tool_results": [],
         "errors": [],

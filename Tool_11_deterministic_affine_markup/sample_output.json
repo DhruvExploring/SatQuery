@@ -1,0 +1,60 @@
+{
+  "status": "success",
+  "geotiff_path": "uploads/delhi_sample.tif",
+  "marked_image_path": "uploads/delhi_sample_marked.png",
+  "raster_grid": {
+    "width": 512,
+    "height": 512,
+    "crs": "EPSG:4326",
+    "epsg": 4326,
+    "affine_transform": [
+      0.00015625,
+      0.0,
+      77.2,
+      0.0,
+      -0.0001171875,
+      28.68
+    ]
+  },
+  "features_total": 2,
+  "features_inside_aoi": 2,
+  "features_outside_aoi": 0,
+  "features": [
+    {
+      "badge_number": 1,
+      "name": "Red Fort",
+      "category": "historic",
+      "latitude": 28.6562,
+      "longitude": 77.241,
+      "pixel_c": 262,
+      "pixel_r": 203,
+      "subpixel_c": 262.4,
+      "subpixel_r": 203.093,
+      "inside_aoi": true,
+      "marker_color": "#00E5FF"
+    },
+    {
+      "badge_number": 2,
+      "name": "Jama Masjid",
+      "category": "place_of_worship",
+      "latitude": 28.6507,
+      "longitude": 77.2334,
+      "pixel_c": 214,
+      "pixel_r": 250,
+      "subpixel_c": 213.76,
+      "subpixel_r": 250.027,
+      "inside_aoi": true,
+      "marker_color": "#00E676"
+    }
+  ],
+  "warnings": [],
+  "mathematical_provenance": {
+    "standards": [
+      "John P. Snyder (1987) USGS PP 1395",
+      "OGC GeoTIFF 19-008r4 Sections 6 & 7"
+    ],
+    "equations": "C = ((X-c)e - (Y-f)b) / (ae - bd); R = ((Y-f)a - (X-c)d) / (ae - bd)",
+    "subpixel_precision": true,
+    "hallucination_probability": 0.0
+  }
+}

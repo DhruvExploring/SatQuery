@@ -34,6 +34,7 @@ def _state_from_request(body: QueryRequest) -> SatQueryState:
     return empty_state(
         query=body.query,
         bbox=body.bbox,
+        region_bbox=body.region_bbox,
         latitude=body.latitude,
         longitude=body.longitude,
         start_date=body.start_date,
@@ -126,6 +127,8 @@ def run_query(
         tool_results=result.get("tool_results", []),
         errors=result.get("errors", []),
         execution_trace=result.get("execution_trace", []),
+        knowledge_base=result.get("knowledge_base"),
+        initial_description=result.get("initial_description"),
     )
     status_code = http_status_for_query(result)
     if status_code == 500 and _latest_tool_error_type(result) == "import_error":
@@ -144,10 +147,11 @@ def run_query_stream(
     ],
 ) -> StreamingResponse:
     """Server-Sent Events variant of /api/v1/query: emits one `step` event per
-    LangGraph node (validate, plan, execute, advance, respond) as it actually
-    completes, then a closing `final` event with the same payload shape as
-    the non-streaming endpoint -- for a UI that wants to show the tool chain
-    unfolding live instead of only after the whole request finishes.
+    LangGraph node (validate, load_knowledge_base, vlm_initial_description,
+    llm, tool, respond) as it actually completes, then a closing `final`
+    event with the same payload shape as the non-streaming endpoint -- for a
+    UI that wants to show the tool chain unfolding live instead of only
+    after the whole request finishes.
     """
     logger.info(
         "Received streaming query: %r  bbox=%s  input_file=%s",
@@ -181,6 +185,8 @@ def run_query_stream(
                 "tool_results": accumulated.get("tool_results", []),
                 "errors": accumulated.get("errors", []),
                 "execution_trace": accumulated.get("execution_trace", []),
+                "knowledge_base": accumulated.get("knowledge_base"),
+                "initial_description": accumulated.get("initial_description"),
             }
             yield f"data: {json.dumps(final_payload, default=str)}\n\n"
         except Exception as exc:

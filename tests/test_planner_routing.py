@@ -1,8 +1,9 @@
-"""Keyword planner routing: SAR/flood > weather > vegetation > optical."""
+"""Keyword planner routing: flood/wildfire/drought missions > weather > vegetation > optical."""
 
 from backend.orchestrator.llm import make_plan
 from backend.orchestrator.registry import (
     ANALYTICAL_S2_BANDS,
+    TOOL_FLOOD,
     TOOL_MULTI,
     TOOL_OPTICAL,
     TOOL_SAR,
@@ -15,15 +16,25 @@ from backend.orchestrator.state import empty_state
 DELHI = [77.10, 28.50, 77.30, 28.70]
 
 
-def test_detect_flood_area_keyword_still_matches_sar():
+def test_detect_flood_area_matches_flood_mission_not_bare_sar():
+    # With the deterministic mission agenda removed, the flood workflow tool
+    # is only reachable through this same keyword/LLM routing -- "flood"
+    # must resolve to the mission tool, not the lower-level SAR fetch, so it
+    # stays reachable at all.
     tool, _reason = match_tool_from_query("detect flood area")
+    assert tool == TOOL_FLOOD
+
+
+def test_sar_keywords_without_flood_still_match_bare_sar():
+    tool, _reason = match_tool_from_query("get radar backscatter imagery")
     assert tool == TOOL_SAR
 
 
-def test_detect_flood_area_handshake_is_mission_not_sar_only():
+def test_detect_flood_area_clarifies_missing_mission_inputs():
     plan = make_plan(empty_state("detect flood area", bbox=DELHI))
     assert plan["action"] == "clarify"
-    assert "two scenes" in plan["reason"].lower() or "lulc" in plan["reason"].lower()
+    assert plan["tool"] == TOOL_FLOOD
+    assert "lulc" in plan["reason"].lower()
 
 
 def test_analyze_crop_health_selects_multispectral_not_optical():

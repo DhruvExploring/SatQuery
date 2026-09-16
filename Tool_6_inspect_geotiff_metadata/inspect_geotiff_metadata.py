@@ -8,6 +8,7 @@ and cross-raster grid alignment compatibility for downstream ML/LLM analysis.
 
 import io
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,8 @@ from typing import Literal, Optional, List, Dict, Any, Tuple
 import numpy as np
 import rasterio
 from rasterio.warp import transform_bounds
+
+logger = logging.getLogger("satquery.tool6_inspect_geotiff_metadata")
 from pydantic import BaseModel, Field, field_validator, model_validator
 try:
     from fastmcp import FastMCP
@@ -101,6 +104,31 @@ def inspect_geotiff_metadata(req: GeoTIFFInspectionRequest) -> dict:
             approx_area_km2 = round((width_m * height_m) / 1e6, 2)
         else:
             approx_area_km2 = None
+
+        # Per-pixel WGS84 resolution and the four scene corners -- lets a
+        # caller convert any pixel-space region (e.g. a box a user drew on a
+        # rendered preview, as a fraction of image width/height) into exact
+        # real-world coordinates without re-deriving this math itself.
+        # Exact for a north-up raster (every GeoTIFF this project's own
+        # fetch/analysis tools produce); for a rotated/skewed raster this is
+        # still the best available linear approximation from the bounding
+        # envelope alone -- deterministic_affine_markup (Tool 11) is the
+        # source of truth for a single point's exact pixel location via the
+        # raster's real affine transform.
+        if bounds_wgs84 and width > 0 and height > 0:
+            pixel_size_wgs84_degrees = {
+                "lon_per_pixel": round((bounds_wgs84["max_lon"] - bounds_wgs84["min_lon"]) / width, 10),
+                "lat_per_pixel": round((bounds_wgs84["max_lat"] - bounds_wgs84["min_lat"]) / height, 10),
+            }
+            corners_wgs84 = {
+                "top_left": {"latitude": bounds_wgs84["max_lat"], "longitude": bounds_wgs84["min_lon"]},
+                "top_right": {"latitude": bounds_wgs84["max_lat"], "longitude": bounds_wgs84["max_lon"]},
+                "bottom_left": {"latitude": bounds_wgs84["min_lat"], "longitude": bounds_wgs84["min_lon"]},
+                "bottom_right": {"latitude": bounds_wgs84["min_lat"], "longitude": bounds_wgs84["max_lon"]},
+            }
+        else:
+            pixel_size_wgs84_degrees = None
+            corners_wgs84 = None
             
         bands_info = []
         band_stats = {}
@@ -183,11 +211,30 @@ def inspect_geotiff_metadata(req: GeoTIFFInspectionRequest) -> dict:
                 }
                 
                 if req.calculate_histogram:
-                    counts, bin_edges = np.histogram(valid_arr, bins=10)
-                    histograms[desc] = {
-                        "bin_edges": [round(float(e), 4) for e in bin_edges],
-                        "counts": [int(c) for c in counts],
-                    }
+                    try:
+                        # range=(min_v, max_v) is passed explicitly (not left
+                        # for numpy to recompute) as a defensive measure
+                        # against a numpy internal edge case (floating-point
+                        # rounding can push a value's computed bin index one
+                        # past the last bin in numpy's fast uniform-binning
+                        # path, which numpy's own out-of-range correction
+                        # doesn't catch -- observed as "operands could not be
+                        # broadcast together" from deep inside
+                        # numpy.lib.histograms). Still wrapped in try/except
+                        # since that class of bug isn't fully preventable from
+                        # here -- a display-only histogram must never abort
+                        # inspection of an otherwise valid raster.
+                        counts, bin_edges = np.histogram(valid_arr, bins=10, range=(min_v, max_v))
+                        histograms[desc] = {
+                            "bin_edges": [round(float(e), 4) for e in bin_edges],
+                            "counts": [int(c) for c in counts],
+                        }
+                    except Exception as exc:
+                        logger.warning(
+                            "Histogram computation failed for band %r (%s): %r",
+                            desc, b_idx, exc,
+                        )
+                        histograms[desc] = None
                     
         is_georef = bool(crs is not None and src.transform != rasterio.Affine.identity())
         min_valid_fraction = min(b["valid_pixel_fraction"] for b in bands_info) if bands_info else 0.0
@@ -244,6 +291,8 @@ def inspect_geotiff_metadata(req: GeoTIFFInspectionRequest) -> dict:
                 "is_projected": is_projected,
                 "coordinate_units": unit_str,
                 "resolution": {"x": res_x, "y": res_y, "unit": unit_str},
+                "pixel_size_wgs84_degrees": pixel_size_wgs84_degrees,
+                "corners_wgs84": corners_wgs84,
                 "bounds_native": bounds_native,
                 "bounds_wgs84": bounds_wgs84,
                 "approx_area_km2": approx_area_km2,

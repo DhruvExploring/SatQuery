@@ -2,7 +2,7 @@
 
 ## 1. System Overview
 
-This document specifies the architecture, inter-tool workflows, decision trees, and integration contracts for the complete **8-Tool Geospatial Intelligence Suite (SatQuery)**.
+This document specifies the architecture, inter-tool workflows, decision trees, and integration contracts for the complete **11-Tool Geospatial Intelligence Suite (SatQuery)**.
 
 The system is designed with a strict **Separation of Concerns & Single Responsibility Principle**:
 - **Tools 1 to 3 (Earth Observation Data Ingestion Providers):** Autonomous micro-services connecting to satellite APIs (Sentinel Hub, Copernicus Sentinel-2 L2A, Sentinel-1 GRD), retrieving imagery, executing server/local processing, validating rasters with `rasterio`, and returning standard GeoTIFF rasters + structured metadata with **AOI-Level SCL Quality Validation** and cloud-penetrating SAR capabilities.
@@ -11,11 +11,14 @@ The system is designed with a strict **Separation of Concerns & Single Responsib
 - **Tool 6 (Universal Pre-Flight Quality Assurance & Raster Profiler):** Deep spatial inspection of single and paired GeoTIFFs (CRS, affine bounds, NoData integrity, physical pixel GSD, data types, and structural alignment).
 - **Tool 7 (Temporal Change Detection & Continuous Differential Engine):** Production-grade differential algebra engine that aligns $T_1$ and $T_2$ rasters, applies relative/absolute noise thresholds, computes geodesic surface area change, and exports `difference_raster.tif` and integer `change_mask.tif`.
 - **Tool 8 (Categorical GIS & Topographical Landscape Profiler):** Categorical biome characterizer that ingests classified LULC rasters (e.g. ESA WorldCover 10m) and DEM rasters (e.g. Copernicus DEM 30m). Performs 8-connectivity patch fragmentation, 2D slope gradient derivation in degrees, and executes the **Tool 7 $\rightarrow$ Tool 8 Handshake** via zonal cross-tabulation.
+- **Tool 9 (Ground Truth, Event Context & Geospatial Web Intelligence):** Fills the narrative gap between satellite pixels and real-world facts — event causes, disaster reports, infrastructure project names — via Tavily web search with an automatic keyless DuckDuckGo fail-safe.
+- **Tool 10 (Spatial Geocoding & POI Discovery Engine):** Bridges GeoTIFF bounding boxes and human-readable geography: forward/reverse geocoding, scene-identity resolution (bbox → region description + in-scene landmark grounding), and in-AOI POI discovery via LocationIQ/OpenStreetMap.
+- **Tool 11 (Deterministic Affine Projector & Markup Engine):** Projects known lat/long features (e.g. from Tool 10) onto a GeoTIFF's exact pixel grid via closed-form inverse affine transform math — zero hallucination, unlike a vision model's guess — and renders badge markup on a preview image.
 - **LangGraph / Agent Layer:** Orchestrates multi-step reasoning, selects tools based on user intent, checks quality flags, triggers fallbacks (e.g. SAR when optical cloud cover is excessive), and synthesizes multi-modal geospatial intelligence for downstream LLMs.
 
 ---
 
-## 2. Tool Registry Matrix (8-Tool Ecosystem)
+## 2. Tool Registry Matrix (11-Tool Ecosystem)
 
 | Tool ID | Directory Name | FastMCP Tool Name | Primary Provider / Tech | Input Schema | Output Artifacts & JSON Telemetry |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -27,6 +30,9 @@ The system is designed with a strict **Separation of Concerns & Single Responsib
 | **Tool 6** | `Tool_6_inspect_geotiff_metadata` | `inspect_geotiff_metadata_mcp` | Universal Local Rasterio QA Engine | Input GeoTIFF path, Optional compare path | Structural, Georeferencing, NoData Integrity & Compatibility JSON |
 | **Tool 7** | `Tool_7_analyze_temporal_change` | `analyze_temporal_change_mcp` | Local Differential Algebra Engine | $T_1$ and $T_2$ GeoTIFFs, Thresholds | `difference_raster.tif`, `change_mask.tif` + Shift Stats & Area Accounting JSON |
 | **Tool 8** | `Tool_8_analyze_spatial_landcover_terrain` | `analyze_spatial_landcover_terrain_mcp` | Local Discrete GIS & DEM Engine | LULC GeoTIFF, Optional DEM, Optional Zone Mask | LULC Composition, Patch Fragmentation, Slope Profiles & Zonal Cross-Tabulation JSON |
+| **Tool 9** | `Tool_9_fetch_web_intelligence` | `fetch_web_intelligence` | Tavily Search API (DuckDuckGo fail-safe) | Natural-language query, optional location hint/bbox | Synthesized answer + ranked web results JSON |
+| **Tool 10** | `Tool_10_spatial_geocoding_poi` | `spatial_geocoding_poi` | LocationIQ (OpenStreetMap Nominatim/Overpass fallback) | Place name, or lat/lon, or bbox (mode auto-inferred) | Coordinates/address/region-identity/POI-list JSON, depending on mode |
+| **Tool 11** | `Tool_11_deterministic_affine_markup` | `deterministic_affine_markup` | Local Closed-Form Affine Math + Pillow Rendering | GeoTIFF path, list of named lat/lon features | Annotated PNG + exact/subpixel coordinate projection JSON |
 
 ---
 

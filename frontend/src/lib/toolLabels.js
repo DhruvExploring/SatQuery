@@ -19,7 +19,14 @@ const LABELS = {
   compare_images_visually: 'Visual comparison',
   workflow_wildfire_burn_severity: 'Wildfire burn severity',
   workflow_flood_inundation_impact: 'Flood inundation',
-  workflow_agricultural_drought_canopy_stress: 'Drought / canopy stress'
+  workflow_agricultural_drought_canopy_stress: 'Drought / canopy stress',
+  get_place_name_from_coordinates: 'Reverse geocode',
+  fetch_web_intelligence: 'Web search',
+  geocode_place_to_coordinates: 'Forward geocode',
+  resolve_scene_identity: 'Scene identity',
+  discover_points_of_interest: 'Points of interest',
+  deterministic_affine_markup: 'Precise coordinate markup',
+  describe_marked_region: 'Describe marked region'
 };
 
 export function toolLabel(toolName) {

@@ -48,7 +48,8 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
       boundsWgs84: null,
       info: null,
       roi: null,
-      modelBbox: null
+      modelBbox: null,
+      knowledgeBase: null
     });
 
     const uploaded = await uploadRasterFile(picked);
@@ -59,7 +60,12 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
       return;
     }
 
-    onChange({ uploading: false, uploadedPath: uploaded.path, originalFilename: picked.name });
+    onChange({
+      uploading: false,
+      uploadedPath: uploaded.path,
+      originalFilename: picked.name,
+      knowledgeBase: uploaded.knowledgeBase
+    });
     runInspection(uploaded.path, myToken);
   };
 
@@ -90,7 +96,8 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
         height: inspectResult.raster?.height,
         bandCount: inspectResult.raster?.band_count,
         crs: inspectResult.spatial?.crs,
-        georeferenced: inspectResult.quality?.is_georeferenced
+        georeferenced: inspectResult.quality?.is_georeferenced,
+        pixelSizeWgs84Degrees: inspectResult.spatial?.pixel_size_wgs84_degrees || null
       }
     });
   };
@@ -239,6 +246,13 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
         <div className="tool-badge tool-badge-success tool-badge-quiet">
           GeoTIFF inspection ✓ · {slot.info.width}×{slot.info.height} · {slot.info.bandCount} band(s) ·{' '}
           {slot.info.crs} · {slot.info.georeferenced ? 'georeferenced' : 'not georeferenced'}
+          {slot.info.pixelSizeWgs84Degrees && (
+            <>
+              {' '}
+              · {slot.info.pixelSizeWgs84Degrees.lon_per_pixel.toExponential(3)}°lon/px,{' '}
+              {slot.info.pixelSizeWgs84Degrees.lat_per_pixel.toExponential(3)}°lat/px
+            </>
+          )}
         </div>
       )}
       {slot.inspecting && <div className="tool-badge tool-badge-pending tool-badge-quiet">Inspecting GeoTIFF…</div>}

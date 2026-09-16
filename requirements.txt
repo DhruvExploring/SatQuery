@@ -6,15 +6,24 @@ pydantic>=2.5.0
 fastmcp>=0.1.0
 python-dotenv>=1.0.0
 pillow>=10.0.0
+# NotRequired (backend/orchestrator/state.py) is stdlib typing only on
+# Python 3.11+; this project supports 3.10+, so it's imported from here
+# directly rather than relying on it as some other package's transitive dep.
+typing_extensions>=4.7.0
 
 shapely
 pyproj
+
+# Tool 9: fetch_web_intelligence (Tavily primary, DuckDuckGo keyless fallback)
+tavily-python
+duckduckgo-search
 
 langgraph
 langchain>=0.3.0
 langchain-core
 langchain-openai>=0.3.0
 langchain-anthropic>=0.3.0
+langchain-skillkit>=0.3.0
 # Pinned to the lowest version langchain-openai allows (openai<4.0.0,>=2.45.0):
 # newer openai releases ship a much larger SDK type surface (chatkit, graders,
 # expansive beta.responses types), which made pydantic-core's one-time schema
@@ -28,3 +37,9 @@ uvicorn[standard]
 python-multipart
 httpx
 pytest
+
+# Optional: only imported when SATQUERY_MEMORY_BACKEND is "in_memory" or
+# "postgres" (default "none" never touches this; llm.py::_build_memory_tools
+# already catches ImportError and disables memory tools gracefully if this
+# isn't installed -- listed anyway so that path doesn't silently no-op).
+langmem

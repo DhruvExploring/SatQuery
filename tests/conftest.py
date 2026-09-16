@@ -73,6 +73,107 @@ def _stub_execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             "executive_summary": {"stub": True},
             "request": args,
         }
+    if name == "get_place_name_from_coordinates":
+        return {
+            "status": "success",
+            "place_name": "Test Location",
+            "raw": {},
+            "request": args,
+        }
+    if name == "fetch_web_intelligence":
+        return {
+            "status": "success",
+            "provider": "mock",
+            "fallback_triggered": False,
+            "fallback_reason": None,
+            "query": args.get("query"),
+            "results_count": 1,
+            "summary": "A mock web intelligence summary.",
+            "results": [],
+            "request": args,
+        }
+    if name == "geocode_place_to_coordinates":
+        return {
+            "status": "success",
+            "provider": "mock",
+            "query": args.get("query"),
+            "candidates_count": 1,
+            "candidates": [{"name": "Mock Landmark", "latitude": 28.6562, "longitude": 77.2410}],
+            "best_match": {"name": "Mock Landmark", "latitude": 28.6562, "longitude": 77.2410},
+            "request": args,
+        }
+    if name == "resolve_scene_identity":
+        return {
+            "status": "success",
+            "bbox": args.get("bbox"),
+            "centroid": {"latitude": 28.6, "longitude": 77.2},
+            "geographic_identity": "Mock Region, Mock State, Mock Country",
+            "narrative_summary": "This satellite raster covers Mock Region.",
+            "hierarchy": {"locality": "Mock Region", "city": "Mock City", "state": "Mock State", "country": "Mock Country"},
+            "landmarks": [],
+            "boundary_audits": [],
+            "request": args,
+        }
+    if name == "discover_points_of_interest":
+        return {
+            "status": "success",
+            "bbox": args.get("bbox"),
+            "categories_requested": args.get("poi_categories") or ["tourism", "historic"],
+            "poi_count": 1,
+            "pois": [{"name": "Mock POI", "category": "historic", "latitude": 28.6, "longitude": 77.2, "inside_aoi": True}],
+            "request": args,
+        }
+    if name == "deterministic_affine_markup":
+        return {
+            "status": "success",
+            "geotiff_path": args.get("geotiff_path"),
+            "marked_image_path": "mock_marked.png",
+            "features_total": len(args.get("features") or []),
+            "features_inside_aoi": len(args.get("features") or []),
+            "features_outside_aoi": 0,
+            "features": [],
+            "warnings": [],
+            "request": args,
+        }
+    if name == "describe_marked_region":
+        return {
+            "status": "success",
+            "region": {
+                "pixel_window": {"col_off": 10.0, "row_off": 10.0, "width": 50.0, "height": 50.0},
+                "bounds_wgs84_requested": {
+                    "min_lon": (args.get("region_bbox") or [0, 0, 0, 0])[0],
+                    "min_lat": (args.get("region_bbox") or [0, 0, 0, 0])[1],
+                    "max_lon": (args.get("region_bbox") or [0, 0, 0, 0])[2],
+                    "max_lat": (args.get("region_bbox") or [0, 0, 0, 0])[3],
+                },
+                "bounds_wgs84_achieved": {
+                    "min_lon": (args.get("region_bbox") or [0, 0, 0, 0])[0],
+                    "min_lat": (args.get("region_bbox") or [0, 0, 0, 0])[1],
+                    "max_lon": (args.get("region_bbox") or [0, 0, 0, 0])[2],
+                    "max_lat": (args.get("region_bbox") or [0, 0, 0, 0])[3],
+                },
+            },
+            "text": "A mock description of the marked region.",
+            "model": "mock",
+            "provider": "mock",
+            "request": args,
+        }
+    if name in ("analyze_imagery_vlm", "mark_region_in_image"):
+        return {
+            "status": "success",
+            "text": "A mock description of the image.",
+            "model": "mock",
+            "provider": "mock",
+            "request": args,
+        }
+    if name == "compare_images_visually":
+        return {
+            "status": "success",
+            "text": "A mock comparison of the two images.",
+            "model": "mock",
+            "provider": "mock",
+            "request": args,
+        }
 
     scene = {
         "fetch_optical_imagery": "S2_OPTICAL_MOCK",
@@ -102,13 +203,19 @@ def _stub_execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def pytest_configure() -> None:
+    import backend.orchestrator.ingest_graph as ingest_graph
     import backend.orchestrator.llm as llm
     import backend.orchestrator.nodes as nodes
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
     import backend.tools.executor as executor
 
     # Deterministic single-tool planner for tests regardless of .env
     llm.plan_single_tool = llm._keyword_plan  # type: ignore[assignment]
 
-    # Stub tool execution so pytest never hits live APIs
+    # Stub tool execution so pytest never hits live APIs. Each module that
+    # did `from backend.tools.executor import execute_tool` holds its own
+    # name binding, so the module-level attribute must be patched too.
     executor.execute_tool = _stub_execute_tool  # type: ignore[assignment]
     nodes.execute_tool = _stub_execute_tool  # type: ignore[assignment]
+    tool_loop_graph.execute_tool = _stub_execute_tool  # type: ignore[assignment]
+    ingest_graph.execute_tool = _stub_execute_tool  # type: ignore[assignment]

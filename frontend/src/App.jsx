@@ -46,6 +46,20 @@ function boundsToBbox(bounds) {
   return [bounds.min_lon, bounds.min_lat, bounds.max_lon, bounds.max_lat];
 }
 
+function bboxObjToArray(bbox) {
+  if (!bbox) return null;
+  return [bbox.min_lon, bbox.min_lat, bbox.max_lon, bbox.max_lat];
+}
+
+/** The marked ROI's real-world bbox, as [min_lon, min_lat, max_lon, max_lat]
+ * -- sent to the backend as region_bbox so describe_marked_region can crop
+ * the actual GeoTIFF to exactly what the user drew, instead of the model
+ * only seeing a natural-language hint about roughly where to look. */
+function regionBboxFor(slot) {
+  if (!slot?.roi || !slot?.boundsWgs84) return null;
+  return bboxObjToArray(roiBoxToBbox(slot.roi, slot.boundsWgs84));
+}
+
 function buildFilePayload(mode, slotA, slotB) {
   const payload = {};
   if (mode === 'single') {
@@ -57,6 +71,8 @@ function buildFilePayload(mode, slotA, slotB) {
     // the app already has.
     const bbox = boundsToBbox(slotA.boundsWgs84);
     if (bbox) payload.bbox = bbox;
+    const regionBbox = regionBboxFor(slotA);
+    if (regionBbox) payload.region_bbox = regionBbox;
     return payload;
   }
   if (slotA.uploadedPath) payload.raster_before_path = slotA.uploadedPath;
@@ -67,6 +83,9 @@ function buildFilePayload(mode, slotA, slotB) {
   payload.input_file = slotB.uploadedPath || slotA.uploadedPath || undefined;
   const bbox = boundsToBbox(slotB.boundsWgs84) || boundsToBbox(slotA.boundsWgs84);
   if (bbox) payload.bbox = bbox;
+  // region_bbox tracks whichever slot input_file actually points at.
+  const regionBbox = slotB.uploadedPath ? regionBboxFor(slotB) : regionBboxFor(slotA);
+  if (regionBbox) payload.region_bbox = regionBbox;
   return payload;
 }
 

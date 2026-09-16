@@ -14,7 +14,29 @@ export function describeStep(entry) {
     return { label: ok ? 'Validated input' : 'Validation failed', ok };
   }
 
-  if (node === 'plan') {
+  if (node === 'load_knowledge_base') {
+    if (summary === 'loaded from disk' || summary === 'provided inline') {
+      return { label: 'Loaded image knowledge base', ok: true };
+    }
+    return { label: 'No knowledge base for this image', ok: null };
+  }
+
+  if (node === 'vlm_initial_description') {
+    if (summary === 'generated') return { label: 'Auto-described whole image', ok: true };
+    if (summary === 'failed') return { label: 'Initial description failed', ok: false };
+    return { label: 'Skipped initial description', ok: null };
+  }
+
+  if (node === 'describe_region_auto') {
+    if (summary === 'generated') return { label: 'Auto-described marked region', ok: true };
+    if (summary === 'failed') return { label: 'Marked-region description failed', ok: false };
+    return { label: 'No region marked', ok: null };
+  }
+
+  // "llm" and "tool" are the tool_loop subgraph's own node names
+  // (backend/orchestrator/tool_loop_graph.py) -- each hop of the
+  // start -> llm -> tool -> llm ... loop appends one of each.
+  if (node === 'llm') {
     const action = summary.match(/action=(\S+)/)?.[1];
     const tool = summary.match(/tool=(\S+)/)?.[1];
     if (action === 'call_tool' && tool) return { label: `Plan: use ${toolLabel(tool)}`, ok: true };
@@ -25,18 +47,12 @@ export function describeStep(entry) {
     return { label: 'Plan', ok: true };
   }
 
-  if (node === 'execute') {
+  if (node === 'tool') {
     const m = summary.match(/^(\S+) status=(\S+)/);
     if (m) return { label: `Run ${toolLabel(m[1])}`, ok: m[2] === 'success' };
     if (summary.startsWith('blocked')) return { label: 'Blocked: missing input', ok: false };
+    if (summary.startsWith('skipped')) return { label: 'No tool to run', ok: null };
     return { label: 'Execute', ok: false };
-  }
-
-  if (node === 'advance') {
-    const complete = /complete=True/.test(summary);
-    const gated = summary.includes('gated');
-    if (gated) return { label: 'Stopped (data issue)', ok: false };
-    return { label: complete ? 'Ready to answer' : 'Gather more info', ok: true };
   }
 
   if (node === 'respond') {
@@ -46,5 +62,7 @@ export function describeStep(entry) {
     return { label: 'Error', ok: false };
   }
 
-  return { label: node, ok: true };
+  // Fallback: any node not covered above still shows explicitly, by its
+  // raw name and summary, rather than being silently dropped.
+  return { label: summary ? `${node}: ${summary}` : node, ok: true };
 }

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import time
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from backend.orchestrator.handshake import apply_advance, build_plan_update
-from backend.orchestrator import llm as llm_module
-from backend.orchestrator.registry import format_tool_success
+from backend.orchestrator.registry import (
+    TOOL_DESCRIBE_REGION,
+    format_tool_success,
+    trusted_args_for_tool,
+)
 from backend.orchestrator.state import SatQueryState, trace_entry
 from backend.orchestrator.synthesis import synthesize_final_answer
 from backend.tools.executor import execute_tool
@@ -92,120 +94,131 @@ def validate_input(state: SatQueryState) -> dict[str, Any]:
     }
 
 
-def plan(state: SatQueryState) -> dict[str, Any]:
-    provider = llm_module.settings.orchestrator_provider
-    logger.info(
-        "[ORCHESTRATOR INITIATED] provider=%s model=%s",
-        provider,
-        llm_module.settings.orchestrator_model if provider != "mock" else "keyword-planner",
-    )
-    update = build_plan_update(state, llm_module.plan_single_tool)
-    planned = update.get("plan") or {}
-    action = planned.get("action")
-    tool = planned.get("tool")
-    reason = planned.get("reason") or ""
-    summary = f"action={action}" + (f" tool={tool}" if tool else "")
-    if action == "call_tool":
-        logger.info("[ORCHESTRATOR TOOL CALL] tool=%s reason=%r", tool, reason)
-    else:
-        logger.info("[ORCHESTRATOR DECISION] action=%s reason=%r", action, reason)
-    update["execution_trace"] = [trace_entry("plan", summary)]
-    return update
-
-
-def execute(state: SatQueryState) -> dict[str, Any]:
-    planned = state.get("plan")
-    if not planned or planned.get("action") != "call_tool" or not planned.get("tool"):
+def load_knowledge_base(state: SatQueryState) -> dict[str, Any]:
+    """Load the per-image knowledge base built at upload time (see
+    ingest_graph.py) so the VLM's first description can be grounded in it.
+    """
+    if state.get("knowledge_base"):
         return {
-            "errors": ["execute node ran without a call_tool plan."],
-            "handshake_complete": True,
-            "execution_trace": [trace_entry("execute", "skipped: no call_tool plan")],
+            "execution_trace": [trace_entry("load_knowledge_base", "provided inline")]
         }
 
-    tool_name = planned["tool"]
-    args = dict(planned.get("args") or {})
-    if not args:
-        from backend.orchestrator.registry import (
-            location_ready_for_tool,
-            trusted_args_for_tool,
-        )
+    input_file = state.get("input_file")
+    if not input_file:
+        return {
+            "execution_trace": [trace_entry("load_knowledge_base", "no input_file")]
+        }
 
-        if not location_ready_for_tool(tool_name, state):
-            return {
-                "errors": [f"{tool_name} is missing a required input."],
-                "handshake_complete": True,
-                "execution_trace": [
-                    trace_entry("execute", f"blocked {tool_name}: missing input")
-                ],
-            }
-        args = trusted_args_for_tool(tool_name, state)
+    kb_path = Path(input_file).with_suffix(".kb.json")
+    if not kb_path.exists():
+        return {
+            "execution_trace": [
+                trace_entry("load_knowledge_base", "no knowledge base on disk")
+            ]
+        }
 
-    logger.info("[TOOL CALL] %s args=%s", tool_name, args)
-    started = time.perf_counter()
-    result = execute_tool(tool_name, args)
-    duration_ms = (time.perf_counter() - started) * 1000.0
-    logger.info(
-        "[TOOL OUTPUT] %s status=%s duration_ms=%.0f",
-        tool_name,
-        result.get("status", "unknown"),
-        duration_ms,
-    )
+    try:
+        knowledge_base = json.loads(kb_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not load knowledge base from %s: %r", kb_path, exc)
+        return {
+            "execution_trace": [trace_entry("load_knowledge_base", "failed to load")]
+        }
 
-    update: dict[str, Any] = {
-        "tool_results": [{
-            "tool": tool_name,
-            "result": result,
-            "duration_ms": duration_ms,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }],
-        "execution_trace": [
-            trace_entry("execute", f"{tool_name} status={result.get('status', 'unknown')}")
-        ],
+    return {
+        "knowledge_base": knowledge_base,
+        "execution_trace": [trace_entry("load_knowledge_base", "loaded from disk")],
     }
 
-    if result.get("status") == "success":
-        data = result.get("data") if isinstance(result.get("data"), dict) else {}
-        if tool_name in (
-            "fetch_satellite_imagery",
-            "fetch_optical_imagery",
-            "fetch_multispectral_imagery",
-            "fetch_sar",
-            "fetch_sar_imagery",
-        ):
-            path = data.get("file_path") or result.get("file_path")
-            if path:
-                update["input_file"] = path
-        elif tool_name == "compute_vegetation_indices":
-            path = data.get("file_path") or result.get("file_path")
-            if path:
-                update["input_file"] = path
-        elif tool_name == "inspect_geotiff_metadata":
-            path = (result.get("file") or {}).get("file_path")
-            if path:
-                update["input_file"] = path
-        elif tool_name == "analyze_temporal_change":
-            products = result.get("generated_products") or {}
-            if products.get("change_mask_path"):
-                update["last_change_mask_path"] = products["change_mask_path"]
 
-    return update
+def vlm_initial_description(state: SatQueryState) -> dict[str, Any]:
+    """Ground the first response in the upload-time knowledge base: ask the
+    vision model to describe the image with the known bands/lat/long/place
+    name already in hand, before any further tool calls are considered.
 
+    Recorded into tool_results (not just initial_description) so the
+    tool-loop subgraph's continuation planner sees it as already-gathered
+    evidence -- it can decide "that's enough, finish" or "I still need
+    another tool" using the exact same logic as any other hop.
+    """
+    input_file = state.get("input_file")
+    if not input_file:
+        return {
+            "execution_trace": [
+                trace_entry("vlm_initial_description", "no image to describe")
+            ]
+        }
 
-def advance(state: SatQueryState) -> dict[str, Any]:
-    update = apply_advance(state)
-    hops = update.get("handshake_hops")
-    complete = update.get("handshake_complete")
-    summary = f"hops={hops} complete={complete}"
-    if update.get("errors"):
-        summary += " gated"
-    logger.info(
-        "[ORCHESTRATOR ADVANCE] hops=%s complete=%s%s",
-        hops,
-        complete,
-        " (more steps -> back to plan)" if not complete else " (handshake finished -> respond)",
+    knowledge_base = state.get("knowledge_base") or {}
+    query = state.get("query") or ""
+    contextualized_query = (
+        f"{query}\n\nKnown metadata about this image: {json.dumps(knowledge_base)}"
     )
-    update["execution_trace"] = [trace_entry("advance", summary)]
-    return update
+
+    result = execute_tool(
+        "analyze_imagery_vlm",
+        {"image_path": input_file, "query": contextualized_query},
+    )
+    if result.get("status") != "success":
+        logger.info("[INITIAL DESCRIPTION FAILED] %s", result.get("error"))
+        return {
+            "execution_trace": [trace_entry("vlm_initial_description", "failed")]
+        }
+
+    description = result.get("text") or ""
+    logger.info("[INITIAL DESCRIPTION] chars=%d", len(description))
+    return {
+        "initial_description": description,
+        "tool_hops": (state.get("tool_hops") or 0) + 1,
+        "tool_results": [{
+            "tool": "analyze_imagery_vlm",
+            "result": result,
+        }],
+        "execution_trace": [trace_entry("vlm_initial_description", "generated")],
+    }
+
+
+def describe_region_if_marked(state: SatQueryState) -> dict[str, Any]:
+    """Ground a user-marked sub-region (region_bbox) exactly once per
+    request, deterministically -- not left to the tool-loop planner's
+    discretion, which otherwise sometimes decides the whole-image
+    description already covers it and never calls describe_marked_region at
+    all (observed in practice: it fired for a first marked-region question in
+    a conversation, then silently skipped it for two later questions against
+    newly marked regions, because the planner treated the earlier answer/the
+    automatic whole-image description as already sufficient).
+
+    Recorded into tool_results (like vlm_initial_description) so the
+    continuation planner sees it as already-gathered evidence and doesn't
+    need to -- and shouldn't -- call describe_marked_region again itself.
+    """
+    region_bbox = state.get("region_bbox")
+    input_file = state.get("input_file")
+    if not region_bbox or not input_file:
+        return {
+            "execution_trace": [
+                trace_entry("describe_region_auto", "no marked region")
+            ]
+        }
+
+    args = trusted_args_for_tool(TOOL_DESCRIBE_REGION, state)
+    result = execute_tool(TOOL_DESCRIBE_REGION, args)
+    if result.get("status") != "success":
+        logger.info("[REGION DESCRIBE FAILED] %s", result.get("error"))
+        return {
+            "execution_trace": [trace_entry("describe_region_auto", "failed")]
+        }
+
+    logger.info("[REGION DESCRIBE] chars=%d", len(result.get("text") or ""))
+    return {
+        "tool_hops": (state.get("tool_hops") or 0) + 1,
+        "tool_results": [{
+            "tool": TOOL_DESCRIBE_REGION,
+            "result": result,
+        }],
+        "execution_trace": [trace_entry("describe_region_auto", "generated")],
+    }
+
 
 def respond(state: SatQueryState) -> dict[str, Any]:
     errors = state.get("errors") or []
@@ -268,7 +281,14 @@ def respond(state: SatQueryState) -> dict[str, Any]:
             ],
         }
 
-    if action == "chat":
+    # A bare "chat" action only means "this needs no tool at all" when
+    # nothing has been gathered yet. If tool_results (or the VLM's initial
+    # description) is already populated -- e.g. the mock keyword planner
+    # returning "chat" on a continuation hop because no keyword matched --
+    # that's "stop gathering, answer from what's collected", not "no tool
+    # was ever needed"; fall through to the tool_results synthesis below
+    # instead of overwriting real findings with the canned reply.
+    if action == "chat" and not (state.get("tool_results") or state.get("initial_description")):
         logger.info("[ORCHESTRATOR DECISION] status=ok (chat, no tool needed)")
         return {
             "status": "ok",
@@ -286,6 +306,15 @@ def respond(state: SatQueryState) -> dict[str, Any]:
     results = state.get("tool_results") or []
 
     if not results:
+        if state.get("initial_description"):
+            logger.info("[ORCHESTRATOR DECISION] status=success (initial description only)")
+            return {
+                "status": "success",
+                "final_answer": state["initial_description"],
+                "execution_trace": [
+                    trace_entry("respond", "success (initial description only)")
+                ],
+            }
         logger.info("[ORCHESTRATOR DECISION] status=error (no tool output collected)")
         return {
             "status": "error",
@@ -328,7 +357,7 @@ def respond(state: SatQueryState) -> dict[str, Any]:
 
     prefix = ""
     if len(results) > 1:
-        prefix = f"Completed {len(results)}-step handshake. "
+        prefix = f"Completed {len(results)} tool calls. "
 
     synthesized = synthesize_final_answer(state, results)
     final_answer = synthesized or (prefix + format_tool_success(tool_name, latest))

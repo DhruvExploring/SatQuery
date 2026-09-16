@@ -1,4 +1,4 @@
-"""Tool execution dispatcher for SatQuery Tools 1–8."""
+"""Tool execution dispatcher for SatQuery Tools 1–11."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ if str(_ROOT) not in sys.path:
 
 def _wrap_tool_error(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, ValueError):
+        logger.exception("SATQUERY_TOOL_VALUE_ERROR")
         return {
             "status": "error",
             "error": {
@@ -402,6 +403,164 @@ def _run_workflow_drought(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------
+# TOOL 9 — fetch_web_intelligence: ground-truth web search context.
+# ---------------------------------------------------------------------
+
+def _run_web_intelligence(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_9_fetch_web_intelligence.fetch_web_intelligence import (
+            WebIntelligenceRequest,
+            fetch_web_intelligence,
+        )
+
+        query = args.get("query")
+        if not query:
+            raise ValueError("fetch_web_intelligence requires a query.")
+
+        req = WebIntelligenceRequest(
+            query=query,
+            **_optional_fields(
+                args,
+                {
+                    "max_results": "max_results",
+                    "search_depth": "search_depth",
+                    "include_domains": "include_domains",
+                    "exclude_domains": "exclude_domains",
+                    "location_hint": "location_hint",
+                    "bbox": "bbox",
+                    "latitude": "latitude",
+                    "longitude": "longitude",
+                },
+            ),
+        )
+
+        return fetch_web_intelligence(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 10 — spatial_geocoding_poi: forward geocoding, scene identity, and
+# in-AOI POI discovery (reverse geocoding is wired separately below, behind
+# the existing get_place_name_from_coordinates name).
+# ---------------------------------------------------------------------
+
+def _run_geocode_forward(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_10_spatial_geocoding_poi.spatial_geocoding_poi import forward_geocode
+
+        query = args.get("query")
+        if not query:
+            raise ValueError("geocode_place_to_coordinates requires a query.")
+
+        return forward_geocode(
+            query=query,
+            bbox=args.get("bbox"),
+            viewbox_clamping=args.get("viewbox_clamping", True),
+            max_results=int(args.get("max_results") or 5),
+        )
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _run_scene_identity(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_10_spatial_geocoding_poi.spatial_geocoding_poi import resolve_scene_identity
+
+        bbox = args.get("bbox")
+        if not bbox:
+            raise ValueError("resolve_scene_identity requires bbox.")
+
+        return resolve_scene_identity(bbox=bbox, query=args.get("query"))
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+def _run_poi_discovery(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_10_spatial_geocoding_poi.spatial_geocoding_poi import discover_in_aoi_pois
+
+        bbox = args.get("bbox")
+        if not bbox:
+            raise ValueError("discover_points_of_interest requires bbox.")
+
+        return discover_in_aoi_pois(
+            bbox=bbox,
+            categories=args.get("poi_categories"),
+            max_results=int(args.get("max_results") or 15),
+        )
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# TOOL 11 — deterministic_affine_markup: exact pixel projection of known
+# lat/long features onto a rendered GeoTIFF preview (no VLM guessing).
+# ---------------------------------------------------------------------
+
+def _run_affine_markup(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from Tool_11_deterministic_affine_markup.deterministic_affine_markup import (
+            AffineMarkupRequest,
+            FeatureItem,
+            project_and_markup_raster,
+        )
+
+        geotiff_path = args.get("geotiff_path") or args.get("input_file")
+        if not geotiff_path:
+            raise ValueError("deterministic_affine_markup requires geotiff_path.")
+
+        features = [FeatureItem(**f) for f in (args.get("features") or [])]
+        req = AffineMarkupRequest(
+            geotiff_path=geotiff_path,
+            features=features,
+            **_optional_fields(
+                args,
+                {
+                    "base_image_path": "base_image_path",
+                    "output_dir": ("output_dir", "analysis_output_dir"),
+                    "draw_pill_badges": "draw_pill_badges",
+                    "draw_bounding_boxes": "draw_bounding_boxes",
+                    "color_palette": "color_palette",
+                },
+            ),
+        )
+
+        return project_and_markup_raster(req)
+
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
+# GEOCODE TOOL — lat/long -> place name.
+# ---------------------------------------------------------------------
+
+def _run_geocode(args: dict[str, Any]) -> dict[str, Any]:
+    latitude = args.get("latitude")
+    longitude = args.get("longitude")
+    if latitude is None or longitude is None:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "get_place_name_from_coordinates requires latitude and longitude.",
+            },
+        }
+    try:
+        from backend.tools.geocode import reverse_geocode
+
+        result = reverse_geocode(float(latitude), float(longitude))
+        return {"status": "success", **result}
+    except Exception as exc:
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
 # VISION TOOL — interprets a rendered image with a swappable VLM backend.
 # ---------------------------------------------------------------------
 
@@ -534,6 +693,105 @@ def _run_visual_compare(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------
+# REGION TOOL -- describes exactly what's inside a user-marked sub-region of
+# a GeoTIFF, by cropping the raster's own pixels to that real-world bbox
+# (registry.py::TOOL_DESCRIBE_REGION) instead of describing the whole image
+# or asking a vision model to re-locate an already-known region.
+# ---------------------------------------------------------------------
+
+def _run_describe_region(args: dict[str, Any]) -> dict[str, Any]:
+    if not settings.vision_tool_enabled:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "The vision tool is disabled (SATQUERY_VISION_TOOL_ENABLED=false).",
+            },
+        }
+
+    image_path = args.get("image_path")
+    region_bbox = args.get("region_bbox")
+    if not image_path:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "describe_marked_region requires image_path.",
+            },
+        }
+    if not region_bbox or len(region_bbox) != 4:
+        return {
+            "status": "error",
+            "error": {
+                "type": "validation_error",
+                "message": "describe_marked_region requires region_bbox [min_lon, min_lat, max_lon, max_lat].",
+            },
+        }
+
+    query = args.get("query") or "Describe what is in this marked region."
+    logger.info("[REGION DESCRIBE] image=%s region_bbox=%s query=%r", image_path, region_bbox, query)
+
+    try:
+        from backend.rendering.raster_preview import render_geotiff_region_preview
+
+        png_bytes, region_info = render_geotiff_region_preview(image_path, region_bbox)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as rendered:
+            rendered.write(png_bytes)
+            cropped_path = rendered.name
+
+        from backend.vision.factory import get_vision_provider
+
+        logger.info(
+            "[VISION CALL region] provider=%s model=%s window=%s",
+            settings.vision_tool_provider,
+            settings.vision_tool_model,
+            region_info["pixel_window"],
+        )
+        result = get_vision_provider().interpret(cropped_path, query)
+        logger.info(
+            "[VISION RESPONSE region] provider=%s chars=%d",
+            result.get("provider", settings.vision_tool_provider),
+            len(result.get("text") or ""),
+        )
+
+        # Best-effort: a verified place name for the region's own center
+        # (Tool 10, via the geocode adapter) grounds the answer in a real
+        # lookup instead of leaving place identification to the vision
+        # model's guess, which can disagree with other context (e.g. the
+        # whole image's own knowledge-base place_name) with no way to tell
+        # which one is actually right.
+        min_lon, min_lat, max_lon, max_lat = region_bbox
+        center_lat = (min_lat + max_lat) / 2.0
+        center_lon = (min_lon + max_lon) / 2.0
+        place_name = None
+        try:
+            from backend.tools.geocode import reverse_geocode
+
+            place_name = reverse_geocode(center_lat, center_lon).get("place_name")
+            logger.info(
+                "[REGION DESCRIBE] reverse geocode center=(%.6f, %.6f) place_name=%r",
+                center_lat, center_lon, place_name,
+            )
+        except Exception as geocode_exc:
+            logger.info(
+                "[REGION DESCRIBE] reverse geocode failed for center=(%.6f, %.6f): %s",
+                center_lat, center_lon, geocode_exc,
+            )
+
+        return {
+            "status": "success",
+            **result,
+            "region": region_info,
+            "region_center": {"latitude": center_lat, "longitude": center_lon},
+            "place_name": place_name,
+        }
+
+    except Exception as exc:
+        logger.info("[REGION DESCRIBE ERROR] %s", exc)
+        return _wrap_tool_error(exc)
+
+
+# ---------------------------------------------------------------------
 # DISPATCH TABLE
 # ---------------------------------------------------------------------
 
@@ -576,6 +834,23 @@ _EXECUTORS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "analyze_imagery_vlm": _run_vlm_analysis,
     "mark_region_in_image": _run_vlm_analysis,
     "compare_images_visually": _run_visual_compare,
+
+    # Reverse geocoding: lat/long -> place name.
+    "get_place_name_from_coordinates": _run_geocode,
+
+    # Tool 9 -- web search ground truth.
+    "fetch_web_intelligence": _run_web_intelligence,
+
+    # Tool 10 -- forward geocoding, scene identity, POI discovery.
+    "geocode_place_to_coordinates": _run_geocode_forward,
+    "resolve_scene_identity": _run_scene_identity,
+    "discover_points_of_interest": _run_poi_discovery,
+
+    # Tool 11 -- deterministic affine coordinate-to-pixel markup.
+    "deterministic_affine_markup": _run_affine_markup,
+
+    # Describe a user-marked sub-region, cropped from the source raster.
+    "describe_marked_region": _run_describe_region,
 }
 
 

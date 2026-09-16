@@ -19,7 +19,7 @@ def test_optical_query_uses_tool_and_succeeds():
     assert result["tool_results"][0]["duration_ms"] >= 0
     assert result["tool_results"][0]["timestamp"]
     nodes = [row["node"] for row in result["execution_trace"]]
-    assert nodes == ["validate", "plan", "execute", "advance", "respond"]
+    assert nodes == ["validate", "load_knowledge_base", "describe_region_auto", "llm", "tool", "llm", "respond"]
 
 
 def test_multispectral_query_routes_correctly():
@@ -77,7 +77,7 @@ def test_fetch_without_bbox_asks_for_clarification():
     assert result["status"] == "clarify"
     assert result["tool_results"] == []
     nodes = [row["node"] for row in result["execution_trace"]]
-    assert nodes == ["validate", "plan", "respond"]
+    assert nodes == ["validate", "load_knowledge_base", "describe_region_auto", "llm", "respond"]
 
 
 def test_invalid_bbox_does_not_call_a_tool():
@@ -109,9 +109,11 @@ def test_flood_query_does_not_stop_at_sar_only():
         )
     )
     assert result["status"] == "clarify"
-    assert result["intent"] == "mission_flood"
     assert result["tool_results"] == []
     assert result["plan"]["action"] == "clarify"
+    # Routes to the flood mission tool (not a bare SAR fetch), just missing
+    # the before/after pair + lulc_raster_path it requires.
+    assert result["plan"]["tool"] == "workflow_flood_inundation_impact"
 
 
 def test_crop_health_uses_multispectral():

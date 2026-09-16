@@ -1,0 +1,23 @@
+{
+  "status": "success",
+  "mode": "scene_identity",
+  "bbox": [
+    77.20,
+    28.62,
+    77.28,
+    28.68
+  ],
+  "centroid": {
+    "latitude": 28.65,
+    "longitude": 77.24
+  },
+  "geographic_identity": "Chandni Chowk, Central Delhi, Delhi, India",
+  "narrative_summary": "This satellite raster covers Chandni Chowk, Central Delhi, Delhi, India centered at coordinates (28.65°N, 77.24°E).",
+  "hierarchy": {
+    "locality": "Chandni Chowk",
+    "city": "Central Delhi",
+    "state": "Delhi",
+    "country": "India"
+  },
+  "full_display_name": "Chandni Chowk, Kotwali Tehsil, Central Delhi, Delhi, 110006, India"
+}

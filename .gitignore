@@ -56,6 +56,9 @@ phase3_agent_outputs/
 !**/test_runs/*.tif
 !**/test_runs/*.tiff
 
+# dev.sh runtime logs
+logs/
+
 # OS and IDE files
 .DS_Store
 Thumbs.db

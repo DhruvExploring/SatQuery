@@ -2,9 +2,12 @@ import React from 'react';
 import { describeStep } from '../lib/executionSteps';
 
 /**
- * The full sequence of graph steps (validate -> plan -> execute -> advance ->
- * ... -> respond) as connected nodes in a line -- the "clear tag of the tool
- * chain" this app needs, without surfacing the raw planner reasoning text.
+ * The full sequence of graph steps (validate -> load_knowledge_base ->
+ * vlm_initial_description -> describe_region_auto -> [llm -> tool]* ->
+ * respond, one entry per backend execution_trace row -- see
+ * backend/orchestrator/graph.py) as connected nodes in a line -- the "clear
+ * tag of the tool chain" this app needs, without surfacing the raw planner
+ * reasoning text. Every trace entry is shown; describeStep() never drops one.
  * `vertical` stacks the nodes in a column (used in the narrow left panel)
  * instead of a wrapping horizontal row. `activeLast` pulses the most recent
  * node (the request is still streaming in more steps behind it).

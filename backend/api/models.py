@@ -236,6 +236,20 @@ QUERY_OPENAPI_EXAMPLES: dict[str, dict[str, Any]] = {
             "end_date": "2025-04-30",
         },
     },
+    "tool_describe_region": {
+        "summary": "Describe a marked region (vision, grounded)",
+        "description": (
+            "Needs input_file (a GeoTIFF) and region_bbox. Crops the raster to "
+            "region_bbox and describes only that crop. Vision tool must be enabled."
+        ),
+        "value": {
+            "query": "What is in the region I marked?",
+            "input_file": (
+                "Tool_1_fetch_optical_imagery/test_runs/sample_optical_output.tif"
+            ),
+            "region_bbox": [77.15, 28.55, 77.20, 28.60],
+        },
+    },
     "tool1_sar_fallback": {
         "summary": "Tool 1 — optical (SAR fallback is automatic)",
         "description": (
@@ -269,6 +283,16 @@ class QueryRequest(BaseModel):
     bbox: list[float] | None = Field(
         default=None,
         description="[min_lon, min_lat, max_lon, max_lat]. Required for imagery tools.",
+    )
+    region_bbox: list[float] | None = Field(
+        default=None,
+        description=(
+            "[min_lon, min_lat, max_lon, max_lat] of a sub-region of input_file "
+            "the user has already marked/drawn (e.g. a frontend ROI box "
+            "converted to real coordinates via the image's own bounds_wgs84). "
+            "Distinct from bbox, which is the AOI for fetch tools or the whole "
+            "image's own extent. Used by describe_marked_region."
+        ),
     )
     latitude: float | None = Field(
         default=None,
@@ -431,6 +455,14 @@ class QueryResponse(BaseModel):
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     execution_trace: list[dict[str, Any]] = Field(default_factory=list)
+    knowledge_base: dict[str, Any] | None = Field(
+        default=None,
+        description="Per-image knowledge base (bands/lat/long/place_name) built at upload time, if input_file has one.",
+    )
+    initial_description: str | None = Field(
+        default=None,
+        description="The VLM's first-pass description of input_file, grounded in knowledge_base, before any further tool calls.",
+    )
 
 
 class HealthResponse(BaseModel):

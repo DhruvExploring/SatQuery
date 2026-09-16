@@ -1,22 +1,16 @@
-"""Conditional routing after planner and handshake advance."""
+"""Conditional routing for the outer SatQuery graph."""
 from __future__ import annotations
 from backend.orchestrator.state import SatQueryState
 
-def route_after_plan(state: SatQueryState) -> str:
-    plan = state.get("plan") or {}
-    return "execute" if plan.get("action") == "call_tool" else "respond"
+
+def route_after_validate(state: SatQueryState) -> str:
+    """Skip knowledge-base loading, the VLM first pass, and the tool loop
+    entirely when input validation already failed -- there's nothing valid
+    to ground a description in, and respond() reports the error directly."""
+    return "error" if state.get("errors") else "continue"
 
 
-def route_after_advance(state: SatQueryState) -> str:
-    if state.get("handshake_complete"):
-        return "respond"
-    if state.get("errors"):
-        return "respond"
-    plan = state.get("plan") or {}
-    idx = int(state.get("agenda_index") or 0)
-    agenda = state.get("agenda") or []
-    if idx >= len(agenda) and state.get("intent") != "single_tool":
-        return "respond"
-    if plan.get("action") != "call_tool":
-        return "respond"
-    return "continue"
+def route_after_load_kb(state: SatQueryState) -> str:
+    """Only run the VLM first-pass description when there's actually a
+    knowledge base to ground it in (i.e. an uploaded/validated image)."""
+    return "describe" if state.get("knowledge_base") else "skip"
