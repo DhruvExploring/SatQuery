@@ -151,9 +151,19 @@ def derive_grounding_fields(metadata_result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _region_center(state: SatQueryState) -> tuple[float, float] | None:
-    """Geometric center of a marked region_bbox: the intersection of its two
-    diagonals, i.e. the midpoint of its min/max lat and min/max lon. Returns
-    (latitude, longitude) or None if no region is marked."""
+    """The anchor point for a marked region: region_centroid (an elongated
+    feature's own path centroid, set only when mark_region_in_image returned
+    a polygon -- see registry.py::TOOL_DESCRIBE_REGION and
+    tool_loop_graph.py's tool_node) when available, since region_bbox's
+    plain intersection-of-diagonals midpoint can land nowhere near a curved
+    or diagonal feature's actual path (e.g. a river) even when its bounding
+    box is otherwise correct. Falls back to that midpoint -- the
+    intersection of region_bbox's two diagonals -- for a plain rectangular
+    region_bbox with no polygon. Returns (latitude, longitude) or None if no
+    region is marked."""
+    centroid = state.get("region_centroid")
+    if centroid and centroid.get("latitude") is not None and centroid.get("longitude") is not None:
+        return centroid["latitude"], centroid["longitude"]
     region_bbox = state.get("region_bbox")
     if not region_bbox or len(region_bbox) != 4:
         return None
@@ -376,8 +386,15 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
             "longitude": point[1] if point else None,
         }
     if tool == TOOL_GEOCODE_FORWARD:
+        # `place_name` is the LLM planner's own clean extraction of what to
+        # search for (llm.py::_PLAN_SCHEMA, set transiently on state for this
+        # hop by _llm_plan) -- prefer it over the raw query, which is a full
+        # sentence the geocoding API can't resolve. Falls back to the raw
+        # query only for the mock/keyword planner (no LLM extraction
+        # available there); see Tool 10's forward_geocode, which does no
+        # parsing of its own on whatever `query` it receives.
         return {
-            "query": state.get("query"),
+            "query": state.get("place_name") or state.get("query"),
             "bbox": _effective_bbox(state),
             "viewbox_clamping": True,
             "max_results": 5,
@@ -386,6 +403,10 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
         return {
             "bbox": _effective_bbox(state),
             "query": state.get("query"),
+            # The LLM planner's own extraction of which landmark(s) the query
+            # names (llm.py::_PLAN_SCHEMA) -- resolve_scene_identity resolves
+            # exactly these, never re-parsing `query` itself for names.
+            "landmark_names": state.get("landmark_names"),
         }
     if tool == TOOL_POI_DISCOVERY:
         return {
@@ -403,6 +424,7 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
         return {
             "image_path": state.get("input_file") or _last_raster_path(state),
             "region_bbox": state.get("region_bbox"),
+            "region_polygon": state.get("region_polygon"),
             "query": state.get("query"),
         }
     raise ValueError(f"Unknown tool: {tool}")
@@ -597,9 +619,13 @@ TOOL_SPEC: dict[str, dict[str, Any]] = {
         "name": TOOL_MARK_REGION,
         "description": (
             "Locate a specific region, object, or feature the user asks about in an "
-            "image, returning both a description and an approximate bounding box "
-            "(as fractions of image width/height) for where it is -- a rough visual "
-            "estimate from a general vision model, not a precise pixel measurement."
+            "image, returning both a description and a bounding box (as fractions of "
+            "image width/height) for where it is. The box's placement is a vision "
+            "model's own visual estimate, but its real-world coordinates are exact: "
+            "the backend affine-converts it into a WGS84 region_bbox from the "
+            "GeoTIFF's own transform, which then drives the same precise marked-region "
+            "pipeline (describe_marked_region, deterministic_affine_markup) a "
+            "user-drawn region does."
         ),
         "requires": ["image_path"],
         "keywords": (

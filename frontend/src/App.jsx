@@ -3,11 +3,25 @@ import { checkHealth, runQueryStream } from './api/satqueryApi';
 import ChatMessage from './components/ChatMessage';
 import ImageSlot from './components/ImageSlot';
 import StepTimeline from './components/StepTimeline';
-import { formatBbox, roiBoxToBbox } from './lib/geo';
+import { roiBoxToBbox } from './lib/geo';
+import { inspectGeotiff } from './lib/inspectGeotiff';
 import { loadSession, saveSession } from './lib/storage';
 
 const RECAP_PAIR_LIMIT = 2;
 const RECAP_ANSWER_CHARS = 320;
+
+// Tool names (canonical + aliases, see backend/orchestrator/registry.py)
+// whose success means a *new* GeoTIFF now exists server-side, the same way
+// picking a file in ImageSlot does -- this is what lets a query like "give
+// me the image of the yamuna river" (no upload at all) result in something
+// a follow-up question can actually operate on.
+const FETCH_IMAGERY_TOOLS = new Set([
+  'fetch_optical_imagery',
+  'fetch_satellite_imagery',
+  'fetch_multispectral_imagery',
+  'fetch_sar_imagery',
+  'fetch_sar'
+]);
 
 function truncate(text, max) {
   if (!text) return '';
@@ -35,10 +49,17 @@ function buildRecap(priorMessages) {
 
 function roiNoteFor(slot, label) {
   if (!slot?.roi) return '';
-  const bbox = slot.boundsWgs84 ? roiBoxToBbox(slot.roi, slot.boundsWgs84) : null;
-  return bbox
-    ? `\n\n(Focus specifically on the ${label} region roughly bounded by ${formatBbox(bbox)}.)`
-    : `\n\n(Focus specifically on the highlighted region of ${label}.)`;
+  // Deliberately no coordinates here -- the exact bbox is already sent
+  // separately as the structured `region_bbox` field (regionBboxFor below,
+  // full precision), which is what actually drives the backend's
+  // marked-region grounding (describe_marked_region, etc.). Embedding the
+  // same rounded numbers as plain query text caused the model to echo this
+  // note back verbatim as if it were a verified tool result, even for a
+  // later, unrelated question -- e.g. "mark the area with the most
+  // vegetation" got answered with the *original* marked region's
+  // coordinates, copied from this hint, instead of that turn's own new
+  // mark_region_in_image result.
+  return `\n\n(Focus specifically on the highlighted region of ${label}.)`;
 }
 
 function boundsToBbox(bounds) {
@@ -87,6 +108,44 @@ function buildFilePayload(mode, slotA, slotB) {
   const regionBbox = slotB.uploadedPath ? regionBboxFor(slotB) : regionBboxFor(slotA);
   if (regionBbox) payload.region_bbox = regionBbox;
   return payload;
+}
+
+/** The most recent successful fetch_*_imagery result in this turn's
+ * tool_results, if any -- a signal that a *new* GeoTIFF now exists
+ * server-side, same as picking a file in ImageSlot. */
+function latestFetchedImagery(toolResults) {
+  const hits = (toolResults || []).filter(
+    (t) => FETCH_IMAGERY_TOOLS.has(t.tool) && t.result?.status === 'success' && t.result?.data?.file_path
+  );
+  return hits[hits.length - 1] || null;
+}
+
+/** Adopts a tool-fetched GeoTIFF into a slot exactly as if the user had
+ * uploaded it themselves: sets uploadedPath/originalFilename, clears the
+ * previous file's now-stale roi/model-marked/knowledge-base fields, then
+ * runs the same background inspect_geotiff_metadata call ImageSlot's own
+ * upload flow does to populate boundsWgs84/info (the fetch tool's own
+ * result doesn't carry bounds in the shape the app needs -- see
+ * inspectGeotiff). Without this, "give me the image of X" leaves nothing
+ * for a follow-up question to operate on, even though the file now exists.
+ * Guards against a slower, now-stale inspect response landing after a newer
+ * image has since replaced this one. */
+function adoptFetchedImagery(setSlot, path, name) {
+  setSlot((prev) => ({
+    ...prev,
+    uploadedPath: path,
+    originalFilename: name,
+    boundsWgs84: null,
+    info: null,
+    roi: null,
+    modelBbox: null,
+    modelPolygon: null,
+    knowledgeBase: null
+  }));
+  inspectGeotiff(path).then((patch) => {
+    if (!patch) return;
+    setSlot((prev) => (prev.uploadedPath === path ? { ...prev, ...patch } : prev));
+  });
 }
 
 const emptySlot = () => ({});
@@ -208,6 +267,19 @@ export default function App() {
     // returns a bbox only when the question was about locating something --
     // draw it on whichever slot was actually queried this turn, and clear
     // any earlier one on that same slot when this turn didn't return one.
+    //
+    // Drawn regardless of whether a manual ROI also exists on the slot: an
+    // earlier version suppressed the AI overlay entirely whenever any manual
+    // ROI was present, on the assumption a later question was still "about"
+    // that same drawn region. That broke a genuinely new request against the
+    // same image (e.g. drawing a region, then later asking to "mark the
+    // area with the most vegetation") -- the tool found a real, different
+    // location, but it never reached the screen. The two overlays already
+    // have distinct styling (dashed green for your drawn ROI, solid violet
+    // tagged "AI" for the model's own result) specifically so they don't get
+    // confused for each other, so there's no need to hide one in favor of
+    // the other -- whichever this turn's tool call actually returned is what
+    // gets drawn.
     if (!networkError) {
       const queriedImagePath = payload.input_file;
       const activeSlot =
@@ -216,19 +288,43 @@ export default function App() {
           : queriedImagePath && queriedImagePath === slotB.uploadedPath
             ? 'B'
             : null;
-      const activeSlotHasManualRoi = activeSlot === 'A' ? !!slotA.roi : activeSlot === 'B' ? !!slotB.roi : false;
 
       const markResult = (body?.tool_results || []).find(
-        (t) => (t.tool === 'mark_region_in_image' || t.tool === 'analyze_imagery_vlm') && Array.isArray(t.result?.bbox)
+        (t) =>
+          (t.tool === 'mark_region_in_image' || t.tool === 'analyze_imagery_vlm') &&
+          (Array.isArray(t.result?.bbox) || Array.isArray(t.result?.polygon))
       );
-      // If you already drew your own region for this image, that's the
-      // precise, authoritative one -- a separate AI-estimated box for the
-      // same image would just be a rougher, possibly conflicting guess
-      // fighting for attention with the one you drew.
-      const modelBbox = activeSlotHasManualRoi ? null : markResult?.result?.bbox || null;
+      const modelBbox = markResult?.result?.bbox || null;
+      // A polygon (an elongated/curved feature's own path, e.g. a river --
+      // see backend/vision/openai_provider.py) is drawn instead of the
+      // plain rectangle when present, since it traces the feature itself
+      // rather than a loose bounding box around it.
+      const modelPolygon = markResult?.result?.polygon || null;
 
-      if (activeSlot === 'A') setSlotA((prev) => ({ ...prev, modelBbox }));
-      else if (activeSlot === 'B') setSlotB((prev) => ({ ...prev, modelBbox }));
+      if (activeSlot === 'A') setSlotA((prev) => ({ ...prev, modelBbox, modelPolygon }));
+      else if (activeSlot === 'B') setSlotB((prev) => ({ ...prev, modelBbox, modelPolygon }));
+
+      // A fetch_*_imagery tool just created a new GeoTIFF server-side (e.g.
+      // "give me the image of the Yamuna river", with no upload at all) --
+      // adopt it as the active image so it renders in the panel and a
+      // follow-up question ("mark the vegetation") has an input_file to
+      // operate on, instead of only appearing as a passive download link in
+      // the chat gallery.
+      const latestFetch = latestFetchedImagery(body?.tool_results);
+      if (latestFetch) {
+        const newPath = latestFetch.result.data.file_path;
+        const newName = latestFetch.result.data.file_name || newPath.split('/').pop();
+        if (mode === 'single') {
+          if (slotA.uploadedPath !== newPath) adoptFetchedImagery(setSlotA, newPath, newName);
+        } else if (slotA.uploadedPath !== newPath && slotB.uploadedPath !== newPath) {
+          // Two-image mode: fill whichever slot is empty (A before B). If
+          // both already hold a file, leave them alone -- overwriting a
+          // deliberate before/after comparison would be more surprising
+          // than helpful; the fetched file still shows in the chat gallery.
+          if (!slotA.uploadedPath) adoptFetchedImagery(setSlotA, newPath, newName);
+          else if (!slotB.uploadedPath) adoptFetchedImagery(setSlotB, newPath, newName);
+        }
+      }
     }
   };
 

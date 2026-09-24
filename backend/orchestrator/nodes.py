@@ -167,7 +167,7 @@ def vlm_initial_description(state: SatQueryState) -> dict[str, Any]:
 
     description = result.get("text") or ""
     logger.info("[INITIAL DESCRIPTION] chars=%d", len(description))
-    return {
+    update: dict[str, Any] = {
         "initial_description": description,
         "tool_hops": (state.get("tool_hops") or 0) + 1,
         "tool_results": [{
@@ -176,6 +176,25 @@ def vlm_initial_description(state: SatQueryState) -> dict[str, Any]:
         }],
         "execution_trace": [trace_entry("vlm_initial_description", "generated")],
     }
+
+    # This automatic call goes through execute_tool() directly, not
+    # tool_loop_graph.py's tool_node -- so it needs its own copy of the same
+    # region-fields-from-affine-converted-geometry merge (see that module's
+    # tool_node for TOOL_MARK_REGION/TOOL_VLM), or a query like "mark the
+    # river" that happens to get its bbox/polygon from this initial call
+    # (fired before the planner is even consulted) would never surface
+    # region_bbox at all -- silently skipping describe_region_auto right
+    # after this node and leaving the frontend showing only the raw,
+    # ungeoreferenced guess.
+    region_bbox = result.get("region_bbox")
+    if region_bbox and not state.get("region_bbox"):
+        update["region_bbox"] = region_bbox
+        if result.get("region_polygon"):
+            update["region_polygon"] = result["region_polygon"]
+        if result.get("region_centroid"):
+            update["region_centroid"] = result["region_centroid"]
+
+    return update
 
 
 def describe_region_if_marked(state: SatQueryState) -> dict[str, Any]:
@@ -260,22 +279,10 @@ def respond(state: SatQueryState) -> dict[str, Any]:
 
     if action == "clarify":
         reason = (planned.get("reason") or "").strip()
-        guide = (
-            "I can fetch optical, multispectral, or SAR imagery, "
-            "weather, vegetation indices, GeoTIFF inspection, temporal change, "
-            "or land-cover/terrain analysis. Provide the required input: "
-            "bbox [min_lon, min_lat, max_lon, max_lat] "
-            "(Delhi: [77.10, 28.50, 77.30, 28.70]), "
-            "latitude and longitude for weather, "
-            "input_file for indices/inspection, "
-            "raster_before_path and raster_after_path for change detection, "
-            "post_start_date and post_end_date for a T2 fetch window, "
-            "or lulc_raster_path for land cover."
-        )
         logger.info("[ORCHESTRATOR DECISION] status=clarify reason=%r", reason)
         return {
             "status": "clarify",
-            "final_answer": f"{reason} {guide}".strip() if reason else guide,
+            "final_answer": reason or "Could you clarify what you'd like me to do?",
             "execution_trace": [
                 trace_entry("respond", "clarify")
             ],

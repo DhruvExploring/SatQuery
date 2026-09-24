@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { rasterPreviewUrl, uploadRasterFile } from '../api/rasters';
-import { runQuery } from '../api/satqueryApi';
 import { formatBbox, roiBoxToBbox } from '../lib/geo';
+import { inspectGeotiff } from '../lib/inspectGeotiff';
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 
@@ -49,6 +49,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
       info: null,
       roi: null,
       modelBbox: null,
+      modelPolygon: null,
       knowledgeBase: null
     });
 
@@ -71,35 +72,9 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
 
   const runInspection = async (path, myToken) => {
     onChange({ inspecting: true });
-    const { networkError, body } = await runQuery({
-      query: 'Inspect this GeoTIFF.',
-      input_file: path
-    });
+    const patch = await inspectGeotiff(path);
     if (myToken !== uploadTokenRef.current) return; // superseded while this was in flight
-
-    if (networkError || !body) {
-      onChange({ inspecting: false });
-      return;
-    }
-    const inspectResult = (body.tool_results || []).find(
-      (r) => r.tool === 'inspect_geotiff_metadata'
-    )?.result;
-    if (!inspectResult || inspectResult.status !== 'success') {
-      onChange({ inspecting: false });
-      return;
-    }
-    onChange({
-      inspecting: false,
-      boundsWgs84: inspectResult.spatial?.bounds_wgs84 || null,
-      info: {
-        width: inspectResult.raster?.width,
-        height: inspectResult.raster?.height,
-        bandCount: inspectResult.raster?.band_count,
-        crs: inspectResult.spatial?.crs,
-        georeferenced: inspectResult.quality?.is_georeferenced,
-        pixelSizeWgs84Degrees: inspectResult.spatial?.pixel_size_wgs84_degrees || null
-      }
-    });
+    onChange({ inspecting: false, ...(patch || {}) });
   };
 
   const clearSlot = () => {
@@ -206,18 +181,35 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
                 }}
               />
             )}
-            {slot.modelBbox && (
-              <div
-                className="model-bbox"
-                style={{
-                  left: `${slot.modelBbox[0] * 100}%`,
-                  top: `${slot.modelBbox[1] * 100}%`,
-                  width: `${(slot.modelBbox[2] - slot.modelBbox[0]) * 100}%`,
-                  height: `${(slot.modelBbox[3] - slot.modelBbox[1]) * 100}%`
-                }}
-              >
-                <span className="model-bbox-tag">AI</span>
-              </div>
+            {slot.modelPolygon ? (
+              <>
+                <svg className="model-polygon" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <polygon points={slot.modelPolygon.map(([x, y]) => `${x * 100},${y * 100}`).join(' ')} />
+                </svg>
+                <div
+                  className="model-polygon-anchor"
+                  style={{
+                    left: `${Math.min(...slot.modelPolygon.map((p) => p[0])) * 100}%`,
+                    top: `${Math.min(...slot.modelPolygon.map((p) => p[1])) * 100}%`
+                  }}
+                >
+                  <span className="model-bbox-tag">AI</span>
+                </div>
+              </>
+            ) : (
+              slot.modelBbox && (
+                <div
+                  className="model-bbox"
+                  style={{
+                    left: `${slot.modelBbox[0] * 100}%`,
+                    top: `${slot.modelBbox[1] * 100}%`,
+                    width: `${(slot.modelBbox[2] - slot.modelBbox[0]) * 100}%`,
+                    height: `${(slot.modelBbox[3] - slot.modelBbox[1]) * 100}%`
+                  }}
+                >
+                  <span className="model-bbox-tag">AI</span>
+                </div>
+              )
             )}
           </div>
           <div className="image-preview-hint">Drag on the image to mark the region you're asking about.</div>
@@ -229,10 +221,19 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
               </button>
             </div>
           )}
-          {slot.modelBbox && (
+          {(slot.modelPolygon || slot.modelBbox) && (
             <div className="roi-readout">
-              <span>AI marked a region in its answer (rough estimate, not precise)</span>
-              <button type="button" className="btn-link" onClick={() => onChange({ modelBbox: null })} disabled={disabled}>
+              <span>
+                {slot.modelPolygon
+                  ? "AI traced a region's path in its answer (rough estimate, not precise)"
+                  : 'AI marked a region in its answer (rough estimate, not precise)'}
+              </span>
+              <button
+                type="button"
+                className="btn-link"
+                onClick={() => onChange({ modelBbox: null, modelPolygon: null })}
+                disabled={disabled}
+              >
                 Clear
               </button>
             </div>

@@ -1,6 +1,14 @@
 """SatQuery planner for Tools 1-11.
 
-The model selects the tool; trusted arguments are always produced by the backend.
+The model selects the tool; trusted arguments are always produced by the backend
+from state (bbox, dates, file paths, credentials -- never from the model's own
+`args`). The one deliberate, narrow exception: `place_name`/`landmark_names`
+(_PLAN_SCHEMA below), the model's own extraction of what to search for from the
+user's raw question -- there's no other deterministic source for "what place
+name did they mean," and tools (Tool 10 in particular) must never try to parse
+that out of a raw sentence themselves. See _llm_plan's enrichment step and
+registry.py::trusted_args_for_tool's TOOL_GEOCODE_FORWARD/TOOL_SCENE_IDENTITY
+branches.
 The OpenAI/Claude toggle from the existing project is preserved.
 """
 from __future__ import annotations
@@ -12,12 +20,14 @@ from typing import Any
 
 from backend.config.settings import settings
 from backend.orchestrator.registry import (
+    TOOL_GEOCODE_FORWARD,
     TOOL_INDICES,
     TOOL_INSPECT,
     TOOL_MULTI,
     TOOL_OPTICAL,
     TOOL_REGISTRY,
     TOOL_SAR,
+    TOOL_SCENE_IDENTITY,
     TOOL_SPATIAL,
     TOOL_SPEC,
     TOOL_TEMPORAL,
@@ -162,8 +172,39 @@ _PLAN_SCHEMA = {
         },
         "args": {"type": "object"},
         "reason": {"type": "string"},
+        # Tools never parse the user's natural-language query themselves --
+        # any semantic extraction from raw text happens here, once, by the
+        # model that actually read the question. The backend still builds
+        # every other trusted argument (bbox, dates, paths) from state, not
+        # from `args` -- these two fields are the sole, narrow exception,
+        # because "what place name/landmark(s) to search for" has no other
+        # deterministic source. See registry.py::trusted_args_for_tool's
+        # TOOL_GEOCODE_FORWARD/TOOL_SCENE_IDENTITY branches.
+        "place_name": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "description": (
+                "Only when tool is geocode_place_to_coordinates: the clean "
+                "place/feature name to search for (e.g. 'Yamuna River'), "
+                "extracted from the user's question -- never the full "
+                "question text or conversational wording around it. Null "
+                "for every other tool."
+            ),
+        },
+        "landmark_names": {
+            "anyOf": [
+                {"type": "array", "items": {"type": "string"}},
+                {"type": "null"},
+            ],
+            "description": (
+                "Only when tool is resolve_scene_identity and the question "
+                "names specific landmark(s) to check against the scene: "
+                "their clean name(s) (e.g. ['Red Fort', 'India Gate']), one "
+                "per landmark mentioned. Null when no specific landmark is "
+                "named."
+            ),
+        },
     },
-    "required": ["action", "tool", "args", "reason"],
+    "required": ["action", "tool", "args", "reason", "place_name", "landmark_names"],
 }
 
 @functools.lru_cache(maxsize=1)
@@ -257,7 +298,21 @@ def _llm_plan(state: SatQueryState) -> Plan:
     ])
 
     if result.get("action") not in {"call_tool", "clarify", "chat", "respond_error"}:
-        raise ValueError(f"LLM returned unknown action: {result.get('action')!r}")
+        # Some models occasionally put the tool name where `action` belongs
+        # (e.g. action="get_place_name_from_coordinates" instead of
+        # action="call_tool", tool="get_place_name_from_coordinates") --
+        # the two-field split isn't enum-enforced by every provider. Recover
+        # by treating a resolvable tool name in `action` as the intended
+        # call_tool, instead of discarding an otherwise-clear model choice
+        # and raising.
+        recovered_tool = resolve_llm_tool(result.get("action"))
+        if recovered_tool is None:
+            raise ValueError(f"LLM returned unknown action: {result.get('action')!r}")
+        logger.info(
+            "LLM put tool name %r in the action field; recovered as call_tool.",
+            result.get("action"),
+        )
+        result = {**result, "action": "call_tool", "tool": recovered_tool}
 
     action = result["action"]
     tool = result.get("tool")
@@ -293,13 +348,28 @@ def _llm_plan(state: SatQueryState) -> Plan:
             ).strip()
         return fallback
 
+    # The LLM already read the user's actual question -- for the two tools
+    # whose correct argument is inherently a piece of extracted natural-
+    # language meaning (what place to search for; which landmarks were
+    # named), use its own extraction instead of handing the tool a raw
+    # sentence to parse itself. Injected onto a per-hop state copy (never
+    # the real graph state) so trusted_args_for_tool and
+    # enforce_call_tool_location -- which rebuilds args from state too, see
+    # registry.py -- both see it consistently, and it can never leak into a
+    # later, unrelated hop.
+    enriched_state = state
+    if resolved == TOOL_GEOCODE_FORWARD and result.get("place_name"):
+        enriched_state = {**state, "place_name": result["place_name"]}
+    elif resolved == TOOL_SCENE_IDENTITY and result.get("landmark_names"):
+        enriched_state = {**state, "landmark_names": result["landmark_names"]}
+
     planned = {
         "action": "call_tool",
         "tool": resolved,
-        "args": trusted_args_for_tool(resolved, state),
+        "args": trusted_args_for_tool(resolved, enriched_state),
         "reason": result.get("reason", ""),
     }
-    return enforce_call_tool_location(planned, state)
+    return enforce_call_tool_location(planned, enriched_state)
 
 def plan_single_tool(state: SatQueryState) -> Plan:
     """Keyword or LLM planner for single-tool / chat only. Missions never call this."""

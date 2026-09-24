@@ -48,6 +48,54 @@ def test_describe_region_trusted_args():
     assert args["query"] == state["query"]
 
 
+def test_describe_region_trusted_args_includes_region_polygon():
+    polygon = [{"latitude": 28.58, "longitude": 77.17}, {"latitude": 28.57, "longitude": 77.18}, {"latitude": 28.56, "longitude": 77.19}]
+    state = empty_state(
+        query="what's in the marked region?",
+        input_file="scene.tif",
+        region_bbox=REGION,
+        region_polygon=polygon,
+    )
+    args = trusted_args_for_tool(TOOL_DESCRIBE_REGION, state)
+    assert args["region_polygon"] == polygon
+
+
+def test_describe_region_passes_polygon_through_to_region_preview(monkeypatch):
+    """A region_polygon in args must reach render_geotiff_region_preview's
+    polygon_wgs84 kwarg, so the crop actually gets masked to the feature's
+    own path instead of just region_bbox's wider rectangle."""
+    import backend.rendering.raster_preview as raster_preview
+    import backend.tools.executor as executor
+    import backend.vision.factory as vision_factory
+
+    monkeypatch.setattr(
+        executor, "settings", dataclasses.replace(executor.settings, vision_tool_enabled=True)
+    )
+
+    captured = {}
+    polygon = [{"latitude": 28.58, "longitude": 77.17}, {"latitude": 28.57, "longitude": 77.18}, {"latitude": 28.56, "longitude": 77.19}]
+
+    def _capturing_stub(path, bbox, **kw):
+        captured["polygon_wgs84"] = kw.get("polygon_wgs84")
+        return (b"\x89PNG\r\n\x1a\nstub", {"pixel_window": {}})
+
+    monkeypatch.setattr(raster_preview, "render_geotiff_region_preview", _capturing_stub)
+
+    class _StubProvider:
+        def interpret(self, image_path: str, query: str) -> dict:
+            return {"text": "stub", "model": "stub", "provider": "stub"}
+
+    monkeypatch.setattr(vision_factory, "get_vision_provider", lambda: _StubProvider())
+
+    _run_describe_region({
+        "image_path": "scene.tif",
+        "region_bbox": REGION,
+        "region_polygon": polygon,
+        "query": "what's here?",
+    })
+    assert captured["polygon_wgs84"] == polygon
+
+
 def test_describe_region_disabled_returns_validation_error(monkeypatch):
     import backend.tools.executor as executor
 

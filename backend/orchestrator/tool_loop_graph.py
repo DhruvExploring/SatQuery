@@ -25,7 +25,9 @@ from backend.orchestrator import llm as llm_module
 from backend.orchestrator.registry import (
     TOOL_AFFINE_MARKUP,
     TOOL_GEOCODE_FORWARD,
+    TOOL_MARK_REGION,
     TOOL_SCENE_IDENTITY,
+    TOOL_VLM,
     derive_grounding_fields,
     location_ready_for_tool,
     trusted_args_for_tool,
@@ -181,6 +183,18 @@ def tool_node(state: SatQueryState) -> dict[str, Any]:
                 if state.get("latitude") is None:
                     update["latitude"] = best["latitude"]
                     update["longitude"] = best["longitude"]
+                # A named place resolved to a real-world extent (Nominatim/
+                # LocationIQ's own `boundingbox`, not a guess -- e.g. a
+                # river, park, or district, unlike a single-point landmark)
+                # makes that place directly fetchable: a fetch_* tool that
+                # was only missing bbox becomes reachable next hop the same
+                # way inspect_geotiff_metadata's derived bbox already makes
+                # one reachable above (see the "routing hints" note in
+                # prompts/planner_system.md for the matching planner-facing
+                # instruction).
+                geocoded_bbox = best.get("bounding_box_wgs84")
+                if geocoded_bbox and not state.get("bbox"):
+                    update["bbox"] = geocoded_bbox
         elif tool_name == TOOL_SCENE_IDENTITY:
             landmarks = [
                 {"name": item.get("name"), "latitude": item.get("latitude"), "longitude": item.get("longitude")}
@@ -197,6 +211,25 @@ def tool_node(state: SatQueryState) -> dict[str, Any]:
             path = result.get("marked_image_path")
             if path:
                 update["input_file"] = path
+        elif tool_name in (TOOL_MARK_REGION, TOOL_VLM):
+            # mark_region_in_image's fractional bbox/polygon, once
+            # affine-converted to exact WGS84 region fields
+            # (backend/tools/executor.py::_geometry_to_region_fields),
+            # should drive the same precise downstream pipeline
+            # (describe_marked_region, deterministic_affine_markup) a
+            # user-drawn region_bbox does -- a plain lat/long or the whole
+            # image's own bbox is never a substitute for a region the
+            # vision model actually located. Only fills a still-empty
+            # region_bbox: an existing user-drawn region is a deliberate,
+            # more specific signal that shouldn't be overwritten by a later
+            # general-description call that happens to also return one.
+            region_bbox = result.get("region_bbox")
+            if region_bbox and not state.get("region_bbox"):
+                update["region_bbox"] = region_bbox
+                if result.get("region_polygon"):
+                    update["region_polygon"] = result["region_polygon"]
+                if result.get("region_centroid"):
+                    update["region_centroid"] = result["region_centroid"]
 
     return update
 

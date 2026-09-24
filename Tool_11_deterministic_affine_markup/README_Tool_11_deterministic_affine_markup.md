@@ -145,7 +145,106 @@ Tool 11 produces crisp, anti-aliased visual annotations with dark rounded pill b
 
 ---
 
-## 5. Research & Literature Foundation
+## 5. Reverse Direction: Pixel → WGS84 (`fractional_bbox_to_wgs84`)
+
+Section 2's inverse transform goes world → pixel, for placing a badge at an
+*already-known* coordinate. The same module also exposes the other direction,
+pixel → world, used by a different caller: `mark_region_in_image` (the vision
+tool, `backend/vision/`), which does the opposite job — a VLM visually
+estimates *where* something is as a fractional image-space box, and the
+backend needs that box's real-world coordinates.
+
+```text
+[Vision model's fractional bbox, 0-1 of width/height]
+                             │
+                             ▼
+              Per-corner pixel coordinates
+        (all four corners, not just two — see below)
+                             │
+                             ▼
+             Forward Affine Transformation
+                (Pixels ──▶ Native World X, Y)
+                             │
+                             ▼
+              CRS Reprojection (if needed)
+             (Native CRS ──▶ WGS84 EPSG:4326)
+                             │
+                             ▼
+        min/max across the four corners = region_bbox
+```
+
+- **`compute_forward_affine_coords(c_pixel, r_pixel, affine_params)`** — the forward
+  half of Section 2's matrix: $X = a \cdot C + b \cdot R + c$, $Y = d \cdot C + e \cdot
+  R + f$. Exact for any affine transform, including a rotated/skewed one.
+- **`reproject_native_to_wgs84(x_native, y_native, native_crs)`** — the inverse of
+  Section 2.3's WGS84 → native reprojection, via the same `pyproj.Transformer`
+  machinery.
+- **`fractional_bbox_to_wgs84(geotiff_path, fractional_bbox)`** — the entry point
+  `backend/tools/executor.py::_geometry_to_region_fields` calls for a plain box.
+  Converts a `[x_min, y_min, x_max, y_max]` fractional box into pixel coordinates for
+  **all four corners** individually (top-left, top-right, bottom-left, bottom-right —
+  not just two opposite corners), runs each through the two functions above, then takes
+  the min/max lon/lat across all four. Projecting all four corners, rather than
+  assuming the box's edges stay axis-aligned in world space, is what keeps this exact
+  even when the raster's affine transform has a rotation/shear term ($b \ne 0$ or
+  $d \ne 0$), not only the common north-up case. Raises `ValueError` if the file has no
+  CRS (an ordinary rendered PNG/JPEG, not a georeferenced raster) — the caller treats
+  that as "no geo bbox available for this image," not a request failure.
+
+**What this does and doesn't fix.** The conversion above is exact — it introduces no
+error of its own. What it converts is still only as accurate as the vision model's own
+visual estimate of the box (Section 1's "±20-50 pixel" caveat applies here just as much
+as it does to a human eyeballing the image). For a target whose real-world coordinates
+should be resolved with zero tolerance for a visual guess — a specific named landmark,
+for instance — resolve it by name first (Tool 10) and use this module's *forward*
+direction (Section 2) via `deterministic_affine_markup` instead of relying on
+`mark_region_in_image`'s visual localization.
+
+---
+
+## 6. A Bounding Box Isn't Always the Right Shape: `polygon_pixels_to_wgs84`
+
+A rectangle is a poor fit for an elongated, curved, or linear feature — a river, a
+road, a coastline. The smallest axis-aligned box that fully contains a diagonal path
+necessarily includes a large amount of area the feature never actually touches, no
+matter how accurate any one corner is; this is a limitation of the *shape*, not of
+coordinate precision, and Section 5's exact math doesn't fix it (it makes an
+inevitably-loose box's coordinates exact, not the box tighter).
+
+`polygon_pixels_to_wgs84(geotiff_path, fractional_polygon)` is the shape-level answer:
+it accepts an ordered list of `[x, y]` fractional vertices (`mark_region_in_image`'s
+`polygon`, only returned for a target the vision model judges elongated/curved rather
+than blob-shaped — see `backend/vision/openai_provider.py`'s system prompt) and, for
+**each** vertex individually, runs the same pixel → world → WGS84 math Section 5 uses
+per corner. It returns three things, not one:
+
+| Field | What it is | Used for |
+| :--- | :--- | :--- |
+| `polygon_wgs84` | The projected vertices, in order | Masking a raster crop to the feature's own path (`backend/rendering/raster_preview.py::_mask_to_polygon`) and drawing a tight on-screen outline (frontend `<svg><polygon>`) instead of a loose rectangle |
+| `bbox_wgs84` | The polygon's own axis-aligned envelope | Any caller that still needs a plain rectangle (e.g. a `rasterio` crop window, which is inherently rectangular even when the *content* inside it gets masked) |
+| `centroid_wgs84` | The arithmetic mean of the projected vertices | A location-based tool's anchor point (weather, reverse geocode) — see below |
+
+**Why `centroid_wgs84` matters on its own.** `region_bbox`'s plain midpoint (the
+intersection of its two diagonals) is only a meaningful "center" for a feature that's
+actually near the middle of its own bounding box — true for a compact blob, false for
+almost any elongated path. A river running along one edge of its bounding rectangle has
+a bbox midpoint that can land on dry ground nowhere near the water. The polygon's own
+vertex mean stays close to wherever the path's points actually are, which is what
+`backend/orchestrator/registry.py::_region_center` now prefers whenever a
+`region_centroid` is available (see that file and `backend/orchestrator/README.md`).
+
+This is a *path* centroid (appropriate for points sampled along a line), not a
+filled-polygon area centroid (which would need a proper shoelace-formula calculation
+over a closed, non-self-intersecting boundary) — the vision model is tracing a route,
+not outlining a filled region, so the vertex mean is the semantically correct choice
+here, not an approximation of the "wrong" formula.
+
+Raises the same way Section 5's bbox version does: `ValueError` for no CRS, or for
+fewer than 3 vertices (not a valid polygon).
+
+---
+
+## 7. Research & Literature Foundation
 
 The mathematical transformations and georeferencing standards implemented in Tool 11 are directly grounded in authoritative cartographic and photogrammetric literature:
 

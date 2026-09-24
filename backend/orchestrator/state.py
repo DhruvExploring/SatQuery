@@ -43,10 +43,31 @@ class SatQueryState(TypedDict):
     bbox: NotRequired[list[float] | None]
     latitude: NotRequired[float | None]
     longitude: NotRequired[float | None]
+    # LLM-extracted semantic fields -- the planner reads the raw query and
+    # emits these directly (see llm.py::_PLAN_SCHEMA); tools never parse
+    # natural language themselves (see registry.py::trusted_args_for_tool's
+    # TOOL_GEOCODE_FORWARD/TOOL_SCENE_IDENTITY branches, and
+    # Tool_10_spatial_geocoding_poi/spatial_geocoding_poi.py). Only ever set
+    # transiently for the single hop that needs them (llm.py::_llm_plan),
+    # never persisted/reused across hops.
+    place_name: NotRequired[str | None]
+    landmark_names: NotRequired[list[str] | None]
     # A user-marked sub-region of input_file, in WGS84 [min_lon, min_lat,
     # max_lon, max_lat] -- distinct from `bbox` (the AOI for fetch tools /
     # an uploaded image's own full extent). See TOOL_DESCRIBE_REGION.
     region_bbox: NotRequired[list[float] | None]
+    # An elongated/curved region_bbox's own tighter path -- an ordered list
+    # of {"latitude", "longitude"} vertices, set only when mark_region_in_image
+    # returned a polygon (not just a bbox) for the marked feature. Lets
+    # describe_marked_region mask the crop to the actual path instead of its
+    # whole bounding rectangle. See registry.py::TOOL_DESCRIBE_REGION.
+    region_polygon: NotRequired[list[dict[str, float]] | None]
+    # The marked region's own anchor point for weather/reverse-geocode
+    # lookups: a polygon's path centroid when region_polygon is set (far
+    # more accurate for an elongated feature than region_bbox's own
+    # midpoint, which can land nowhere near the actual feature), otherwise
+    # region_bbox's plain midpoint. See registry.py::_region_center.
+    region_centroid: NotRequired[dict[str, float] | None]
 
     start_date: NotRequired[str | None]
     end_date: NotRequired[str | None]
@@ -138,7 +159,11 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
         "bbox": None,
         "latitude": None,
         "longitude": None,
+        "place_name": None,
+        "landmark_names": None,
         "region_bbox": None,
+        "region_polygon": None,
+        "region_centroid": None,
         "start_date": None,
         "end_date": None,
         "post_start_date": None,

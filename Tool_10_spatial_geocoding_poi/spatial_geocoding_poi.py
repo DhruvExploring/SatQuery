@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass
@@ -86,6 +85,14 @@ class SpatialGeocodingRequest(BaseModel):
     query: Optional[str] = Field(
         default=None,
         description="Place name, landmark, address, or search term (required for 'forward').",
+    )
+    landmark_names: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "For 'scene_identity': the specific landmark name(s) to forward-geocode and "
+            "check against the scene bbox -- already extracted by the caller from the "
+            "user's question (this tool does not parse `query` for landmark names itself)."
+        ),
     )
     latitude: Optional[float] = Field(
         default=None,
@@ -214,26 +221,6 @@ def _rate_limit_nominatim() -> None:
     _LAST_NOMINATIM_CALL_TS = time.time()
 
 
-def _clean_entity_string(text: str) -> str:
-    """Strip conversational filler phrases, spatial prepositions, and markup instructions."""
-    if not text:
-        return ""
-    cleaned = text.strip()
-    # Strip parenthetical aliases like (Lal Qila) or (Old Delhi) if present, but keep primary name
-    cleaned = re.sub(r'\(.*?\)', '', cleaned).strip()
-    cleaned = re.sub(r'^(?:which|what|where|how|can you|could you|please|is there|then)\s+(?:is|are|shown in|location|place)?\s*', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:and\s+)?(?:mark|project|calculate|find|draw|show|identify|locate)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:situated|located|standing|positioned|found)\s+(?:on|in|at|near|adjacent to|beside|by)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:adjacent to|near|close to|beside|next to|opposite to)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:shown in|visible in|covered in|covered by)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:on\s+)?(?:the\s+)?(?:preview|image|raster|scene|satellite|pixel|map)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:in\s+)?(?:this\s+)?(?:scene|image|raster|area|region|bounds|historic walled city area)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:tell me|provide|give me)\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'\s*\b(?:its|exact|geographic|pixel)?\s*coordinates\b.*$', '', cleaned, flags=re.IGNORECASE).strip()
-    cleaned = re.sub(r'^(?:the|a|an|exact|its|that|this)\s+', '', cleaned, flags=re.IGNORECASE).strip()
-    return cleaned
-
-
 def _haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Calculates great-circle distance between two points on Earth in kilometers."""
     import math
@@ -257,21 +244,19 @@ def _get_cardinal_direction(lat_from: float, lon_from: float, lat_to: float, lon
     return ns or ew or "nearby"
 
 
-def _is_valid_landmark_candidate(cand: dict[str, Any], query_entity: str) -> bool:
-    """Filters out low-importance commercial noise (e.g. shops, local restaurants) when searching for landmarks."""
+def _is_valid_landmark_candidate(cand: dict[str, Any]) -> bool:
+    """Filters out low-importance commercial noise (e.g. shops, local restaurants)
+    when searching for a landmark by an already-decided name (landmark_names, see
+    resolve_scene_identity) -- purely on the geocoder's own structured result
+    metadata (class/type/importance), never on the user's original wording:
+    deciding *which* name to search for is the caller's job, not this filter's.
+    """
     osm_class = str(cand.get("class") or "").lower()
     osm_type = str(cand.get("type") or "").lower()
     importance = float(cand.get("importance") or 0.0)
-    q_lower = query_entity.lower()
 
     # Commercial noise classes
     noise_classes = {"amenity", "shop", "office", "commercial", "craft", "leisure"}
-    
-    # Check if the query specifically asked for a commercial establishment
-    explicit_commercial = any(
-        term in q_lower
-        for term in ["hotel", "restaurant", "cafe", "shop", "mall", "market", "store", "hospital", "station", "office"]
-    )
 
     # Valid cultural/heritage types even if under amenity
     valid_heritage_types = {
@@ -279,7 +264,7 @@ def _is_valid_landmark_candidate(cand: dict[str, Any], query_entity: str) -> boo
         "monument", "castle", "fort", "memorial", "tomb", "temple", "mosque", "church", "ruins"
     }
 
-    if osm_class in noise_classes and not explicit_commercial:
+    if osm_class in noise_classes:
         if osm_type in valid_heritage_types or importance >= 0.55:
             return True
         # Discard low-importance local shops/restaurants that share a name with a famous landmark
@@ -298,11 +283,19 @@ def forward_geocode(
     viewbox_clamping: bool = True,
     max_results: int = 5,
 ) -> Dict[str, Any]:
-    """Resolves a place name to geographic coordinates and bounding box."""
+    """Resolves a place name to geographic coordinates and bounding box.
+
+    `query` is expected to already be a clean place/feature name (e.g. "Yamuna
+    River"), not a full natural-language sentence -- the caller (the LLM
+    planner, see registry.py's trusted_args_for_tool for
+    geocode_place_to_coordinates) is responsible for extracting that from the
+    user's actual question. This function does no interpretation of its own
+    beyond whitespace trimming.
+    """
     locationiq_key = os.getenv("LOCATIONIQ_API_KEY", "").strip()
     errors: list[str] = []
 
-    clean_q = _clean_entity_string(query) or query.strip()
+    clean_q = query.strip()
 
     # 1. Try LocationIQ (Primary)
     if locationiq_key:
@@ -399,44 +392,6 @@ def forward_geocode(
     except Exception as exc:
         errors.append(f"Nominatim fallback error: {exc}")
 
-    # 3. Secondary Trimmed Query Fallback if primary clean query returned 0 matches
-    trimmed = _trim_query_for_fallback(clean_q)
-    if trimmed and trimmed.lower() != clean_q.lower():
-        logger.info("[SPATIAL GEOCODING] Primary query %r yielded 0 matches; attempting trimmed retry %r", clean_q, trimmed)
-        try:
-            _rate_limit_nominatim()
-            nom_params_trimmed: dict[str, Any] = {
-                "q": trimmed,
-                "format": "jsonv2",
-                "limit": max_results,
-                "addressdetails": 1,
-            }
-            if bbox and viewbox_clamping:
-                nom_params_trimmed["viewbox"] = f"{bbox[0]},{bbox[3]},{bbox[2]},{bbox[1]}"
-                nom_params_trimmed["bounded"] = 1
-
-            nom_resp_trimmed = requests.get(
-                f"{CONFIG.nominatim_base_url}/search",
-                params=nom_params_trimmed,
-                headers={"User-Agent": CONFIG.user_agent},
-                timeout=CONFIG.http_timeout_s,
-            )
-            if nom_resp_trimmed.status_code == 200:
-                nom_trimmed_results = nom_resp_trimmed.json()
-                if isinstance(nom_trimmed_results, list) and len(nom_trimmed_results) > 0:
-                    candidates = [_format_geocoding_candidate(it, provider="nominatim (trimmed)") for it in nom_trimmed_results]
-                    return {
-                        "provider": "nominatim (trimmed)",
-                        "status": "success",
-                        "query": query,
-                        "resolved_query": trimmed,
-                        "candidates_count": len(candidates),
-                        "candidates": candidates,
-                        "best_match": candidates[0],
-                    }
-        except Exception as exc:
-            errors.append(f"Nominatim trimmed fallback error: {exc}")
-
     return {
         "status": "error",
         "query": query,
@@ -521,85 +476,16 @@ def reverse_geocode(
 # 6. Scene Identity Resolver (BBox Centroid & Hierarchical Levels)
 # =============================================================================
 
-def _extract_landmarks_from_query(query: str | None) -> list[str]:
-    """Extract one or multiple target landmark entities from user query."""
-    if not query:
-        return []
-    q = query.strip()
-    if "Now:" in q:
-        q = q.split("Now:")[-1].strip()
-
-    generic_tokens = {
-        "city", "major river", "river", "district", "state", "country", "scene", "satellite scene",
-        "landmark", "landmarks", "raster", "image", "preview", "preview image",
-        "this image", "this scene", "area", "bounding coordinates", "its bounding coordinates",
-        "coordinates", "exact pixel coordinates", "pixel coordinates", "pixel grid",
-        "that", "this", "it", "them", "which", "where", "what", "place", "location", "there", "here",
-        "which location", "location shown", "its coordinates", "all coordinates", "shown", "image", "preview",
-        "administrative city", "administrative region", "administrative district", "historic walled city area",
-        "administrative city of this", "administrative city of this satellite scene",
-        "both", "all", "exact pixel row and column positions", "boundaries of this scene", "both landmarks",
-    }
-
-    found_entities: list[str] = []
-
-    # Check for conjunction patterns: 'locations of both X and Y', 'locate X and Y', 'X, Y, and Z'
-    multi_match = re.search(
-        r'(?:locations?\s+of\s+(?:both\s+)?|locate\s+(?:both\s+)?|find\s+(?:both\s+)?|mark\s+(?:both\s+)?|search\s+for\s+(?:both\s+)?)(.+?)(?:within|on this raster|on the preview|in this scene|calculate|compute|,?\s+and mark|$)',
-        q,
-        re.IGNORECASE,
-    )
-    if multi_match:
-        span = multi_match.group(1).strip()
-        parts = re.split(r',|\band\b', span, flags=re.IGNORECASE)
-        for p in parts:
-            c = _clean_entity_string(p)
-            if c and c.lower() not in generic_tokens and len(c) >= 3:
-                words = c.lower().split()
-                if not all(w in generic_tokens for w in words):
-                    if c not in found_entities:
-                        found_entities.append(c)
-
-    # Fallback to standard single/multi pattern matches
-    if not found_entities:
-        patterns = [
-            r'(?:locate|find|identify|mark|search for|where is)\s+(?:the\s+|exact\s+|coordinates of\s+)?([A-Za-z0-9\s\-\(\)\'\,\.]+?)(?:,|\.|\band\b|calculate|compute|project|on this raster|on the preview|in this scene|situated|adjacent|$)',
-            r'(?:coordinates of\s+)([A-Za-z0-9\s\-\(\)\'\,\.]+?)(?:,|\.|\band\b|calculate|compute|project|on this raster|on the preview|in this scene|situated|adjacent|$)',
-        ]
-        for pattern in patterns:
-            for m in re.finditer(pattern, q, re.IGNORECASE):
-                raw_cand = m.group(1).strip()
-                c = _clean_entity_string(raw_cand)
-                if c and c.lower() not in generic_tokens and len(c) >= 3:
-                    words = c.lower().split()
-                    if not all(w in generic_tokens for w in words):
-                        if c not in found_entities:
-                            found_entities.append(c)
-
-    # Fallback: clean the whole query only if not a general question
-    if not found_entities and not re.search(r'^(?:which|what|where|how|is this|tell me|who)\b', q, re.IGNORECASE):
-        direct_cand = _clean_entity_string(q)
-        if direct_cand.lower() not in generic_tokens and len(direct_cand) >= 3:
-            words = direct_cand.lower().split()
-            if not all(w in generic_tokens for w in words):
-                found_entities.append(direct_cand)
-
-    # Prioritize entities that are not generic scene terms
-    filtered = [
-        e for e in found_entities
-        if not any(g in e.lower() for g in ["administrative", "scene", "satellite", "raster", "bounding", "city of"])
-    ]
-    return filtered or found_entities
-
-
-def _extract_landmark_from_query(query: str | None) -> str | None:
-    entities = _extract_landmarks_from_query(query)
-    return entities[0] if entities else None
-
-
-def resolve_scene_identity(bbox: list[float], query: Optional[str] = None) -> Dict[str, Any]:
+def resolve_scene_identity(
+    bbox: list[float],
+    query: Optional[str] = None,
+    landmark_names: Optional[list[str]] = None,
+) -> Dict[str, Any]:
     """Calculates BBox centroid and executes hierarchical reverse geocoding to synthesize place identity,
-    and forwards-geocodes all specific landmarks mentioned in the query."""
+    and forwards-geocodes each of `landmark_names` (the specific landmarks the caller -- the LLM
+    planner, having already read the user's question -- has decided the query refers to; this
+    function does no interpretation of `query` itself, which is accepted only for context/logging).
+    """
     min_lon, min_lat, max_lon, max_lat = bbox
     centroid_lat = round((min_lat + max_lat) / 2.0, 6)
     centroid_lon = round((min_lon + max_lon) / 2.0, 6)
@@ -679,10 +565,10 @@ def resolve_scene_identity(bbox: list[float], query: Optional[str] = None) -> Di
         "candidates": [],
     }
 
-    # If query mentions specific landmark(s), resolve each via Two-Tier Geocoding Strategy:
+    # For each caller-supplied landmark name, resolve via Two-Tier Geocoding Strategy:
     # Tier 1: Global Unbounded Search to find the true canonical landmark and coordinates.
     # Tier 2: Check raster BBox containment. If inside -> mark valid. If outside -> emit Spatial Boundary Audit (rejecting local homonyms/shops).
-    landmark_names = _extract_landmarks_from_query(query) if query else []
+    landmark_names = landmark_names or []
     landmarks_found: list[dict[str, Any]] = []
     boundary_audits: list[dict[str, Any]] = []
 
@@ -692,7 +578,7 @@ def resolve_scene_identity(bbox: list[float], query: Optional[str] = None) -> Di
         # 1. Global Unbounded Forward Geocode
         fwd_glob = forward_geocode(name, bbox=None, viewbox_clamping=False)
         glob_candidates = fwd_glob.get("candidates", []) if fwd_glob.get("status") == "success" else []
-        valid_glob_candidates = [c for c in glob_candidates if _is_valid_landmark_candidate(c, name)]
+        valid_glob_candidates = [c for c in glob_candidates if _is_valid_landmark_candidate(c)]
 
         canonical = valid_glob_candidates[0] if valid_glob_candidates else (fwd_glob.get("best_match") if fwd_glob.get("status") == "success" else None)
 
@@ -737,7 +623,7 @@ def resolve_scene_identity(bbox: list[float], query: Optional[str] = None) -> Di
             # Fallback: In-AOI Search with Strict Entity Type Filtering
             fwd_local = forward_geocode(name, bbox=bbox, viewbox_clamping=True)
             local_candidates = fwd_local.get("candidates", []) if fwd_local.get("status") == "success" else []
-            valid_local_candidates = [c for c in local_candidates if _is_valid_landmark_candidate(c, name)]
+            valid_local_candidates = [c for c in local_candidates if _is_valid_landmark_candidate(c)]
 
             if valid_local_candidates:
                 best_local = valid_local_candidates[0]
@@ -1098,7 +984,7 @@ def fetch_spatial_geocoding_poi(request: Union[SpatialGeocodingRequest, Dict[str
             zoom=req.zoom,
         )
     elif req.mode == "scene_identity":
-        return resolve_scene_identity(bbox=req.bbox or [0, 0, 0, 0], query=req.query)
+        return resolve_scene_identity(bbox=req.bbox or [0, 0, 0, 0], query=req.query, landmark_names=req.landmark_names)
     elif req.mode == "poi_discovery":
         return discover_in_aoi_pois(
             bbox=req.bbox or [0, 0, 0, 0],
@@ -1126,6 +1012,7 @@ if FastMCP:
     def mcp_spatial_geocoding_poi(
         mode: Literal["forward", "reverse", "scene_identity", "poi_discovery", "auto"] = "auto",
         query: Optional[str] = None,
+        landmark_names: Optional[list[str]] = None,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
         bbox: Optional[list[float]] = None,
@@ -1138,6 +1025,7 @@ if FastMCP:
         req = SpatialGeocodingRequest(
             mode=mode,
             query=query,
+            landmark_names=landmark_names,
             latitude=latitude,
             longitude=longitude,
             bbox=bbox,

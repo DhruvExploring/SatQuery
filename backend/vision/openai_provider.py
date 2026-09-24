@@ -22,15 +22,27 @@ _SYSTEM_PROMPT = (
     "language.\n\n"
     "If -- and only if -- the question asks you to locate, mark, point out, "
     "circle, highlight, or draw attention to a specific region, object, or "
-    "feature, also estimate a bounding box for that region: set \"bbox\" to "
-    "[x_min, y_min, x_max, y_max], each a fraction between 0 and 1 of the "
-    "image's width/height (0,0 is the top-left corner, 1,1 is the "
-    "bottom-right corner). This is a rough visual estimate from looking at "
-    "the image, not a precise pixel measurement -- say so in your answer if "
-    "precision matters. Never invent a bbox for something that isn't "
+    "feature, also estimate where it is:\n\n"
+    "- If the target is compact and roughly blob-shaped (a building, a lake, "
+    "a field, a stadium, a parking lot), set \"bbox\" to [x_min, y_min, "
+    "x_max, y_max], each a fraction between 0 and 1 of the image's "
+    "width/height (0,0 is the top-left corner, 1,1 is the bottom-right "
+    "corner). Leave \"polygon\" null.\n"
+    "- If the target is instead elongated, curved, or linear (a river, road, "
+    "coastline, pipeline, ridge, or boundary line) where a single rectangle "
+    "would necessarily include far more area than the feature itself, ALSO "
+    "set \"polygon\" to an ordered list of [x, y] points (same 0-1 fraction "
+    "convention) tracing the feature's actual path or outline as tightly as "
+    "possible -- follow its bends, don't just repeat the bbox's four "
+    "corners. Use as many points as the shape actually needs (roughly "
+    "6-20), and still also set \"bbox\" to that path's own bounding "
+    "rectangle, for callers that only want a plain rectangle.\n\n"
+    "Both are a rough visual estimate from looking at the image, not a "
+    "precise pixel measurement -- say so in your answer if precision "
+    "matters. Never invent a bbox or polygon for something that isn't "
     "actually visible in the image.\n\n"
     "If the question does not ask you to locate or mark anything specific, "
-    "set \"bbox\" to null."
+    "set \"bbox\" and \"polygon\" to null."
 )
 
 _RESPONSE_SCHEMA = {
@@ -52,8 +64,29 @@ _RESPONSE_SCHEMA = {
                 "highlight something; otherwise null."
             ),
         },
+        "polygon": {
+            "anyOf": [
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                    },
+                    "minItems": 3,
+                },
+                {"type": "null"},
+            ],
+            "description": (
+                "Ordered list of [x, y] points (fractions 0-1) tracing an "
+                "elongated/curved feature's own path, only when a plain bbox "
+                "would include far more area than the feature; otherwise "
+                "null."
+            ),
+        },
     },
-    "required": ["text", "bbox"],
+    "required": ["text", "bbox", "polygon"],
 }
 
 
@@ -67,6 +100,23 @@ def _clean_bbox(bbox: Any) -> list[float] | None:
     if any(v < 0.0 or v > 1.0 for v in values):
         return None
     return values
+
+
+def _clean_polygon(polygon: Any) -> list[list[float]] | None:
+    if not isinstance(polygon, list) or len(polygon) < 3:
+        return None
+    cleaned: list[list[float]] = []
+    for point in polygon:
+        if not isinstance(point, list) or len(point) != 2:
+            return None
+        try:
+            x, y = float(point[0]), float(point[1])
+        except (TypeError, ValueError):
+            return None
+        if x < 0.0 or x > 1.0 or y < 0.0 or y > 1.0:
+            return None
+        cleaned.append([x, y])
+    return cleaned
 
 
 # Used for compare() -- two arbitrary images, which analyze_temporal_change's
@@ -123,6 +173,7 @@ class OpenAIVisionProvider:
         return {
             "text": result.get("text") or "",
             "bbox": _clean_bbox(result.get("bbox")),
+            "polygon": _clean_polygon(result.get("polygon")),
             "model": settings.vision_tool_model,
             "provider": "openai",
         }

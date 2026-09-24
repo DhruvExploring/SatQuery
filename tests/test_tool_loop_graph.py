@@ -132,3 +132,126 @@ def test_inspect_geotiff_metadata_grounds_bbox_for_next_hop(monkeypatch):
     assert result["bbox"] == [77.10, 28.50, 77.30, 28.70]
     assert result["latitude"] == 28.60
     assert round(result["longitude"], 6) == 77.2
+
+
+def test_mark_region_result_fills_empty_region_bbox(monkeypatch):
+    """A mark_region_in_image call whose bbox was affine-converted to an
+    exact WGS84 region_bbox (backend/tools/executor.py::_geometry_to_region_fields)
+    should thread that region_bbox into state for the next hop, the same way
+    inspect_geotiff_metadata's derived bbox does above."""
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
+
+    def _stub(name, args):
+        if name == "mark_region_in_image":
+            return {
+                "status": "success",
+                "text": "the flooded field is here",
+                "bbox": [0.25, 0.25, 0.75, 0.75],
+                "region_bbox": [77.21, 28.63, 77.27, 28.67],
+            }
+        return {"status": "success"}
+
+    monkeypatch.setattr(tool_loop_graph, "execute_tool", _stub)
+
+    plans = [
+        {
+            "action": "call_tool",
+            "tool": "mark_region_in_image",
+            "args": {},
+            "reason": "locate the flooded field",
+        },
+        {"action": "chat", "tool": None, "args": {}, "reason": "done"},
+    ]
+    calls = iter(plans)
+    monkeypatch.setattr(llm_module, "plan_single_tool", lambda state: next(calls))
+
+    result = tool_loop_subgraph.invoke(
+        empty_state(query="mark the flooded field", input_file="uploaded.tif")
+    )
+
+    assert result["region_bbox"] == [77.21, 28.63, 77.27, 28.67]
+
+
+def test_mark_region_result_also_threads_region_polygon_and_centroid(monkeypatch):
+    """When mark_region_in_image's result includes an affine-converted
+    polygon (an elongated feature's own path) and centroid, both should
+    thread onto state alongside region_bbox, for describe_marked_region's
+    masking and _region_center's more accurate anchor point."""
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
+
+    polygon = [{"latitude": 28.66, "longitude": 77.22}, {"latitude": 28.65, "longitude": 77.24}, {"latitude": 28.64, "longitude": 77.26}]
+    centroid = {"latitude": 28.65, "longitude": 77.24}
+
+    def _stub(name, args):
+        if name == "mark_region_in_image":
+            return {
+                "status": "success",
+                "text": "the river runs through here",
+                "bbox": [0.25, 0.25, 0.75, 0.75],
+                "polygon": [[0.25, 0.1], [0.5, 0.5], [0.75, 0.9]],
+                "region_bbox": [77.21, 28.63, 77.27, 28.67],
+                "region_polygon": polygon,
+                "region_centroid": centroid,
+            }
+        return {"status": "success"}
+
+    monkeypatch.setattr(tool_loop_graph, "execute_tool", _stub)
+
+    plans = [
+        {
+            "action": "call_tool",
+            "tool": "mark_region_in_image",
+            "args": {},
+            "reason": "locate the river",
+        },
+        {"action": "chat", "tool": None, "args": {}, "reason": "done"},
+    ]
+    calls = iter(plans)
+    monkeypatch.setattr(llm_module, "plan_single_tool", lambda state: next(calls))
+
+    result = tool_loop_subgraph.invoke(
+        empty_state(query="mark the river", input_file="uploaded.tif")
+    )
+
+    assert result["region_polygon"] == polygon
+    assert result["region_centroid"] == centroid
+
+
+def test_mark_region_never_overwrites_an_existing_region_bbox(monkeypatch):
+    """A user-drawn region_bbox is a deliberate, more specific signal --
+    a later mark_region_in_image call (e.g. a general description that
+    happens to also return a bbox) must not clobber it."""
+    import backend.orchestrator.tool_loop_graph as tool_loop_graph
+
+    def _stub(name, args):
+        return {
+            "status": "success",
+            "text": "something else entirely",
+            "bbox": [0.0, 0.0, 1.0, 1.0],
+            "region_bbox": [10.0, 10.0, 20.0, 20.0],
+        }
+
+    monkeypatch.setattr(tool_loop_graph, "execute_tool", _stub)
+
+    plans = [
+        {
+            "action": "call_tool",
+            "tool": "mark_region_in_image",
+            "args": {},
+            "reason": "locate something",
+        },
+        {"action": "chat", "tool": None, "args": {}, "reason": "done"},
+    ]
+    calls = iter(plans)
+    monkeypatch.setattr(llm_module, "plan_single_tool", lambda state: next(calls))
+
+    original_region_bbox = [77.21, 28.63, 77.27, 28.67]
+    result = tool_loop_subgraph.invoke(
+        empty_state(
+            query="mark something",
+            input_file="uploaded.tif",
+            region_bbox=original_region_bbox,
+        )
+    )
+
+    assert result["region_bbox"] == original_region_bbox

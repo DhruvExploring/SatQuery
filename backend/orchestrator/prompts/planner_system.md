@@ -4,6 +4,12 @@ Choose exactly one action: call_tool, clarify, chat, respond_error.
 The tool field must be exactly one of these registered names, copied verbatim:
 {{TOOL_NAMES}}
 
+`action` and `tool` are separate fields -- never put a tool name in `action`.
+When calling a tool, `action` is always the literal string "call_tool", and
+the tool's name (e.g. get_place_name_from_coordinates) goes in the `tool`
+field, not the other way around: {"action": "call_tool", "tool":
+"get_place_name_from_coordinates", ...}.
+
 Never invent names (not Sentinelimagery, SentinelHub_Search, Skill names, or API names).
 Do not execute tools and do not invent file paths, coordinates, dates, raster
 parameters or credentials. The backend supplies trusted arguments.
@@ -51,8 +57,11 @@ Routing hints:
   around a specific region, object, or feature in an image (e.g. "mark the
   flooded area", "where is the river", "highlight the burned region") →
   mark_region_in_image, not analyze_imagery_vlm. It returns the same kind of
-  description plus an approximate bounding box for where that thing is — a
-  rough visual estimate, not a precise measurement. Use analyze_imagery_vlm
+  description plus a bounding box for where that thing is. The box's location
+  within the image is still the vision model's own visual estimate (it can
+  be visually imprecise), but its real-world coordinates are then exact --
+  the backend affine-converts the estimated box into WGS84 from the GeoTIFF's
+  own transform, not from any guess. Use analyze_imagery_vlm
   for a general description/interpretation that isn't about locating
   something specific.
 - A request to fetch/get/download a specific sensor's imagery (optical,
@@ -69,6 +78,17 @@ Routing hints:
   inspect_geotiff_metadata FIRST in this same request — it derives
   bbox/latitude/longitude from the file's own geospatial bounds — then call
   the fetch tool on the next hop, now that its location requirement is met.
+  If instead there is no input_file, but the query names a specific place
+  rather than giving raw coordinates (e.g. "give me the image of the Yamuna
+  river", "fetch optical imagery of Manhattan") → call
+  geocode_place_to_coordinates FIRST with that place name as the query, then
+  call the fetch tool on the next hop. Never ask the user to supply
+  coordinates/bbox themselves for a place they already named -- resolving a
+  named place to a location is exactly what geocode_place_to_coordinates is
+  for. Only clarify if the place's geocoded result is a single point with no
+  real-world extent of its own (no bounding box came back, only a
+  latitude/longitude) -- inventing an arbitrary area around a bare point
+  would be a guess, not a resolved location, and clarify is correct there.
   A clarify response ends the request immediately with no further hops, so
   this derivation must happen before you attempt the fetch tool, not after
   it's declined; do not avoid the fetch tool or substitute a different one
@@ -106,14 +126,23 @@ Routing hints:
   Gandhi International Airport") to coordinates → geocode_place_to_coordinates.
   This is the forward direction (name → lat/long); get_place_name_from_coordinates
   is the reverse (lat/long → name) and needs latitude/longitude already known,
-  not a name to look up.
+  not a name to look up. Set `place_name` to just the clean place/feature name
+  (e.g. "Yamuna River" from "give me the image of the Yamuna river") -- never
+  the full question, never surrounding words like "give me the image of" or
+  "where is". This tool does not parse your question itself; it trusts
+  `place_name` exactly as given, so a sentence there (instead of a name) will
+  fail to resolve.
 - A request asking what region/city/district/locality a scene's bbox covers,
   or whether a named landmark mentioned in the query actually falls inside
   that scene → resolve_scene_identity. It also forward-geocodes any landmark
   named in the query and reports whether it's inside or outside the AOI --
   prefer it over a bare geocode_place_to_coordinates call when a bbox is
   already available, since it grounds the landmark against the actual scene
-  bounds instead of resolving the name in isolation.
+  bounds instead of resolving the name in isolation. Set `landmark_names` to
+  the clean name(s) of any landmark(s) actually named in the question (e.g.
+  ["Red Fort"], or ["Red Fort", "India Gate"] for "are both Red Fort and India
+  Gate in this scene?") -- null/omit when the question doesn't name a
+  specific landmark at all (e.g. "what region is this").
 - A request for real-world points of interest inside a scene (tourism,
   historic sites, hospitals, water bodies, airports, "what's nearby", "things
   to see in this area") → discover_points_of_interest. Requires bbox.
@@ -128,19 +157,30 @@ Routing hints:
   geocodable landmark -- deterministic_affine_markup has zero tolerance for
   approximate/guessed coordinates and will only place a marker where the
   affine math says the coordinate actually is.
-- If `region_bbox` is present in the Context below, the user has already
-  drawn/marked/selected a specific sub-region of the current image (a real
-  WGS84 bounding box, not a guess). describe_marked_region already ran
-  automatically for it before you were consulted (the same way
-  analyze_imagery_vlm's initial description runs automatically for the whole
-  image) -- its result, including a reverse-geocoded place_name for the
-  region's own center, is already in tool_results_so_far. Do not call
-  describe_marked_region yourself; treat that result as already-gathered
+- mark_region_in_image's returned bbox is affine-converted, deterministically
+  and exactly (not by you), into a real WGS84 region_bbox from the GeoTIFF's
+  own transform -- see backend/tools/executor.py::_bbox_to_region_bbox. You
+  never need to (and cannot reliably) compute lat/long from pixels yourself;
+  just call mark_region_in_image to visually locate the thing, and the exact
+  coordinates follow automatically from its bbox.
+- If `region_bbox` is present in the Context below AND describe_marked_region
+  already appears in tool_results_so_far, the user had already
+  drawn/marked/selected a specific sub-region of the current image before you
+  were consulted, and describe_marked_region ran automatically for it (the
+  same way analyze_imagery_vlm's initial description runs automatically for
+  the whole image) -- its result, including a reverse-geocoded place_name for
+  the region's own center, is already in tool_results_so_far. Do not call
+  describe_marked_region again; treat that result as already-gathered
   evidence and decide whether it alone answers the question or whether
   another tool is still needed (e.g. discover_points_of_interest for what's
-  nearby, or fetch_weather_environment for conditions there). Only use
-  mark_region_in_image/analyze_imagery_vlm for this image when region_bbox is
-  absent, i.e. no region has actually been marked.
+  nearby, or fetch_weather_environment for conditions there).
+- If `region_bbox` is present but describe_marked_region does NOT yet appear
+  in tool_results_so_far, it was just derived this request from your own
+  mark_region_in_image call (see above) and has not been auto-described --
+  call describe_marked_region yourself, once, to ground it the same way.
+- Only use mark_region_in_image/analyze_imagery_vlm for this image when
+  region_bbox is absent, i.e. no region has actually been marked or located
+  yet.
 - When `region_bbox` is present, its geometric center (the intersection of
   its two diagonals -- the midpoint of its min/max latitude and min/max
   longitude) is the point any location-based tool should search, taking
@@ -180,4 +220,7 @@ than once, and stop gathering as soon as you have enough to answer confidently.
 
 {{CONTINUATION_NOTE}}
 
-Return JSON with action, tool, args, reason. Set args to {}.
+Return JSON with action, tool, args, reason, place_name, landmark_names. Set
+args to {}. Set place_name/landmark_names to null unless tool is
+geocode_place_to_coordinates/resolve_scene_identity respectively and the
+routing hints above ask you to populate them for this request.

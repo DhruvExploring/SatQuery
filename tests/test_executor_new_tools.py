@@ -68,7 +68,7 @@ def test_scene_identity_success(monkeypatch):
     monkeypatch.setattr(
         tool10,
         "resolve_scene_identity",
-        lambda bbox, query=None: {"status": "success", "bbox": bbox, "narrative_summary": "stub"},
+        lambda bbox, query=None, landmark_names=None: {"status": "success", "bbox": bbox, "narrative_summary": "stub"},
     )
     result = _run_scene_identity({"bbox": [77.1, 28.5, 77.3, 28.7]})
     assert result["status"] == "success"

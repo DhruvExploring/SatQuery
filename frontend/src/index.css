@@ -247,6 +247,34 @@ body {
   border-radius: 4px;
 }
 
+/* An elongated/curved feature's own path (e.g. a river), traced instead of
+   boxed -- same violet identity as .model-bbox, drawn as an SVG polygon so
+   it can follow bends a rectangle can't. viewBox is 0-100 in both axes
+   (matching the 0-1 fractions the backend returns, x100), stretched to the
+   image's own aspect ratio via preserveAspectRatio="none" exactly like the
+   percentage-based .model-bbox above; vector-effect keeps the stroke a
+   constant screen width despite that non-uniform scaling. */
+.model-polygon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  animation: model-bbox-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.model-polygon polygon {
+  stroke: #7c3aed;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  fill: rgba(124, 58, 237, 0.12);
+}
+
+.model-polygon-anchor {
+  position: absolute;
+  pointer-events: none;
+}
+
 @keyframes model-bbox-in {
   from {
     opacity: 0;

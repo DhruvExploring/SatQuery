@@ -219,3 +219,63 @@ def test_reconcile_sar_args_keeps_llm_polarization_without_http_field():
         empty_state(query="Get SAR radar imagery for Mumbai"),
     )
     assert args["polarization"] == ["VV", "VH"]
+
+
+def _fake_client_with_extraction(tool: str, **extraction_fields):
+    class _FakeClient:
+        def invoke(self, _messages):
+            return {
+                "action": "call_tool",
+                "tool": tool,
+                "args": {},
+                "reason": "ok",
+                "place_name": None,
+                "landmark_names": None,
+                **extraction_fields,
+            }
+
+    return _FakeClient()
+
+
+def test_llm_plan_uses_extracted_place_name_for_forward_geocode(monkeypatch):
+    """Tool 10 no longer parses the raw query itself (see
+    Tool_10_spatial_geocoding_poi/spatial_geocoding_poi.py) -- the LLM's own
+    place_name extraction must reach the tool's `query` arg instead of the
+    full raw sentence."""
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client_with_extraction("geocode_place_to_coordinates", place_name="Yamuna River"),
+    )
+    state = empty_state(query="give me the image of the yamuna river")
+    plan = _llm_plan(state)
+    assert plan["action"] == "call_tool"
+    assert plan["args"]["query"] == "Yamuna River"
+    # The enrichment must never leak onto the real state object passed in.
+    assert "place_name" not in state or state["place_name"] is None
+
+
+def test_llm_plan_uses_extracted_landmark_names_for_scene_identity(monkeypatch):
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client_with_extraction(
+            "resolve_scene_identity", landmark_names=["Red Fort", "India Gate"]
+        ),
+    )
+    state = empty_state(
+        query="are both red fort and india gate inside this scene",
+        bbox=[77.1, 28.5, 77.3, 28.7],
+    )
+    plan = _llm_plan(state)
+    assert plan["action"] == "call_tool"
+    assert plan["args"]["landmark_names"] == ["Red Fort", "India Gate"]
+    assert "landmark_names" not in state or state["landmark_names"] is None
+
+
+def test_llm_plan_falls_back_to_raw_query_when_place_name_not_extracted(monkeypatch):
+    monkeypatch.setattr(
+        "backend.orchestrator.llm._build_llm_client",
+        lambda: _fake_client_with_extraction("geocode_place_to_coordinates"),
+    )
+    state = empty_state(query="Red Fort")
+    plan = _llm_plan(state)
+    assert plan["args"]["query"] == "Red Fort"

@@ -252,11 +252,24 @@ provider call:
 | Tool | When it's chosen | What it adds |
 | :--- | :--- | :--- |
 | `analyze_imagery_vlm` | General description/interpretation ("describe this image", "what do you see") | Plain-language answer only |
-| `mark_region_in_image` | Locate/mark/highlight/circle a specific region or feature ("mark the flooded area", "where is the river") | Same answer, **plus** an approximate bounding box (`bbox`, fractions 0–1 of image width/height) for where that thing is — the OpenAI provider's own system prompt decides whether to include one, based on the query wording, not which tool name was used to call it |
+| `mark_region_in_image` | Locate/mark/highlight/circle a specific region or feature ("mark the flooded area", "where is the river") | Same answer, **plus** where that thing is: a bounding box (`bbox`, fractions 0–1 of image width/height) for a compact/blob-shaped target, or — for an elongated/curved one (a river, road, coastline) where a box would include far more area than the feature — an ordered `polygon` tracing its actual path, alongside `bbox` as that path's own envelope. The OpenAI provider's own system prompt decides which, based on the target's shape, not which tool name was used to call it. If the source image is a georeferenced GeoTIFF, the backend also affine-converts whichever geometry it got into exact WGS84 fields (`backend/tools/executor.py::_geometry_to_region_fields`, using Tool 11's forward affine math) — see §11 |
 | `compare_images_visually` | A general "what's different / how do these compare" question, especially when the two rasters might not be grid-aligned (different sensor, resolution, or even location) | Qualitative side-by-side description; explicitly told not to assume the two images show the same place unless the evidence supports it |
 
-`bbox` is a rough visual estimate from a general vision-chat model, not a dedicated
-grounding model — treat it as approximate, not pixel-precise. `compare_images_visually`
+`bbox`/`polygon`'s *placement* is a rough visual estimate from a general vision-chat
+model, not a dedicated grounding model — treat where it points as approximate, not
+pixel-precise. Its *coordinates* are a different matter: once affine-converted, they're
+exact for whatever shape the model drew — the conversion introduces zero error of its
+own, the same closed-form math Tool 11 uses for known-coordinate features (see §11).
+Nor does the conversion fix a rectangle's own shape limitation: a bounding box, however
+exact its coordinates, is never a tight fit for a diagonal or curved feature — only
+`polygon` (when the model actually returns one) traces the feature's real path, which is
+also why its own path centroid — not the bounding box's midpoint, which can land nowhere
+near an elongated feature's actual course — is what location-based tools (weather,
+reverse geocode) then use as the region's anchor point (`registry.py::_region_center`,
+§Marked-region tool below). If you want genuinely pinpoint placement rather than an
+honest coordinate/path for an imprecise visual guess, resolve the target by name first
+(`geocode_place_to_coordinates`/`resolve_scene_identity`) and use
+`deterministic_affine_markup` instead of `mark_region_in_image`. `compare_images_visually`
 is also the planner's fallback when `analyze_temporal_change` fails because the two
 rasters aren't grid-aligned (see "Multi-hop continuation" above) — a qualitative
 comparison never requires that alignment.
@@ -602,8 +615,33 @@ and `poi_discovery` (bbox → real-world points of interest via Overpass/OSM). L
 is the primary provider when `LOCATIONIQ_API_KEY` is set; falls back to OpenStreetMap
 Nominatim (keyless, rate-limited) otherwise.
 - The orchestrator exposes reverse geocoding as `get_place_name_from_coordinates` (`backend/tools/geocode.py` adapts Tool 10's response shape to `{place_name, raw}`), and forward/scene-identity/POI-discovery as three separate planner tools: `geocode_place_to_coordinates`, `resolve_scene_identity`, `discover_points_of_interest`.
-- **Requires:** `query` (forward), `latitude`+`longitude` (reverse), or `bbox` (scene_identity/poi_discovery).
+- **Requires:** `query` (forward), `latitude`+`longitude` (reverse), or `bbox` (scene_identity/poi_discovery). `scene_identity` also accepts `landmark_names` (a list of clean landmark names to resolve against the scene).
 - **External dependency:** LocationIQ or OpenStreetMap Nominatim/Overpass.
+- **Does no natural-language interpretation of its own.** `query` (forward mode) and
+  `landmark_names` (scene_identity mode) are expected to already be clean, extracted
+  names — the LLM planner's own job, not this tool's (see `backend/orchestrator/README.md`'s
+  "Tools never parse natural language themselves" section). This tool used to regex-parse
+  the raw query itself (`_clean_entity_string`, `_extract_landmarks_from_query`), which
+  broke in production: those regexes collapsed `"give me the image of the yamuna river"`
+  to an empty string, falling back to sending the *whole sentence* to the geocoder, which
+  then hit a third-tier retry that called an undefined function
+  (`_trim_query_for_fallback`) — an unconditional crash. Both regex functions, and that
+  dangling retry tier, are gone; the tool trusts its input directly.
+- **A forward-geocoded place with its own real-world extent (Nominatim/LocationIQ's own
+  `boundingbox`, not a guess -- e.g. a river, park, or district) makes a `fetch_*` tool
+  reachable on the very next hop.** `_format_geocoding_candidate` already converts that
+  provider `boundingbox` into `bounding_box_wgs84` on `best_match`
+  (`Tool_10_spatial_geocoding_poi/spatial_geocoding_poi.py`); `tool_loop_graph.py`'s
+  `tool` node threads it onto state as `bbox` (only if `bbox` isn't already set), the
+  same way `inspect_geotiff_metadata`'s derived bbox does for an uploaded file. This is
+  what lets "give me the image of the Yamuna river" resolve end-to-end
+  (`geocode_place_to_coordinates` → `fetch_optical_imagery`) instead of dead-ending on a
+  clarify asking the user for raw coordinates — `prompts/planner_system.md`'s routing
+  hints tell the planner to make this exact chain for a named place with no
+  `input_file`. A landmark that only geocodes to a bare point (no `boundingbox` came
+  back) still can't drive a fetch tool this way — inventing an arbitrary area around a
+  point would be a guess, not a resolved location, so that case still correctly
+  clarifies.
 
 ### Tool 11 — Deterministic Affine Markup (`deterministic_affine_markup`)
 Computes the *exact* pixel location of one or more known lat/long features on a
@@ -614,6 +652,35 @@ landmark's coordinates) using Tool 6/the GeoTIFF's own affine transform.
 - **Requires:** `geotiff_path`, `features` (list of `{name, latitude, longitude}`). The orchestrator builds `features` from landmarks a prior `geocode_place_to_coordinates`/`resolve_scene_identity` call resolved (`registry.py::_geocoded_features_for_markup`), or falls back to the single lat/long already on state.
 - **Offline** — pure affine math + Pillow rendering, no network.
 - Prefer `mark_region_in_image` (the vision tool) instead for a vague visual region ("the flooded area") rather than a specific, geocodable landmark — this tool has zero tolerance for approximate coordinates.
+- **The same affine math also runs in reverse for `mark_region_in_image`.** Alongside
+  `compute_inverse_affine_pixel` (world → pixel, used above),
+  `compute_forward_affine_coords` (pixel → world) and `reproject_native_to_wgs84`
+  (native CRS → WGS84) let the backend turn a vision model's fractional bbox into an
+  exact real-world `region_bbox` (`fractional_bbox_to_wgs84`, projecting all four pixel
+  corners individually so a rotated/skewed transform is still handled correctly, not
+  just the north-up case) — see §3 and the "AI's own answer can mark a region back"
+  note under §7's frontend description. `compute_forward_affine_coords` previously
+  existed but was unused by any caller; this is what it's for.
+- **A rectangle is never a tight fit for an elongated/curved feature — `polygon_pixels_to_wgs84`
+  handles the shape itself, not just its coordinates.** For a river, road, or coastline,
+  the smallest axis-aligned box that fully contains it necessarily includes far more
+  area than the feature, no matter how exact any one corner's coordinates are — a shape
+  problem `fractional_bbox_to_wgs84` above can't fix, since it only makes an
+  inevitably-loose box's coordinates exact, not the box tighter. When
+  `mark_region_in_image`'s vision prompt judges the target elongated/curved rather than
+  blob-shaped, it instead returns a `polygon` (an ordered path, not just a rectangle,
+  see §3); `polygon_pixels_to_wgs84` projects **every vertex individually** through the
+  same forward-affine + reprojection math, returning the exact path (`polygon_wgs84`),
+  its own bounding envelope (`bbox_wgs84`, for any caller that still needs a plain
+  rectangle), and — critically — the path's own centroid (`centroid_wgs84`: the mean of
+  its vertices, appropriate for a *path*, not a filled-area centroid), which is what
+  `registry.py::_region_center` now prefers over a bounding box's own midpoint. That
+  midpoint is only meaningful for a feature actually near the middle of its own box —
+  true for a compact blob, false for almost any elongated path (a river hugging one
+  edge of its bounding rectangle has a bbox midpoint that can land on dry ground). See
+  Tool 11's own README (§6) for the full math and the "marked-region tool" section
+  below for how the resulting `region_polygon` masks a crop to the feature's actual
+  shape, not just its envelope.
 
 ### The marked-region tool — `describe_marked_region`
 
@@ -627,6 +694,16 @@ window, renders it to PNG, and runs the vision model only on that crop. Also
 reverse-geocodes the region's own center for a verified `place_name` (Tool 10 via
 `backend/tools/geocode.py`), instead of leaving place identification to the vision
 model's own guess.
+- **When `region_polygon` is also available** (an elongated/curved feature's own
+  affine-converted path, §3/§11 — set alongside `region_bbox`, never instead of it,
+  since a rasterio crop window is inherently rectangular even when the *content*
+  inside it is masked), every pixel outside that path is masked to black before the
+  crop reaches the vision model (`backend/rendering/raster_preview.py::_mask_to_polygon`,
+  wired via `render_geotiff_region_preview`'s `polygon_wgs84` argument). This is what
+  actually closes the loop on the axis-aligned-box problem for description/grounding:
+  without it, the vision model would still see the whole rectangular crop -- polygon
+  or not -- and describe whatever else happens to be in that wider area alongside the
+  actual feature.
 - **Runs automatically, once, whenever `region_bbox` is set** — like
   `analyze_imagery_vlm`'s initial-description call, this is a deterministic graph
   node (`nodes.py::describe_region_if_marked`, wired in `graph.py` right after
@@ -637,13 +714,27 @@ model's own guess.
   conversation turn's answer, already covered a *newly* marked region).
 - Any other location-based tool consulted afterward in the same request prefers the
   marked region over a plain lat/long or the whole image: `fetch_weather_environment`
-  and `get_place_name_from_coordinates` use the region's geometric center — the
-  intersection of its two diagonals, i.e. the midpoint of its min/max lat and min/max
-  lon (`registry.py::_region_center`) — and `resolve_scene_identity`/
+  and `get_place_name_from_coordinates` use the region's anchor point
+  (`registry.py::_region_center`) — `region_centroid` (an elongated feature's own path
+  centroid, when a polygon was resolved) when available, otherwise `region_bbox`'s
+  plain geometric center (the intersection of its two diagonals, i.e. the midpoint of
+  its min/max lat and min/max lon) — and `resolve_scene_identity`/
   `discover_points_of_interest` use `region_bbox` itself in place of `bbox`.
-- **Requires:** `input_file`, `region_bbox`. The frontend supplies `region_bbox` by
-  converting a drawn ROI box to real coordinates client-side
-  (`frontend/src/lib/geo.js::roiBoxToBbox`, using the image's own `bounds_wgs84`).
+- **Requires:** `input_file`, `region_bbox`. **Optional:** `region_polygon` (masks the
+  crop to an elongated feature's own path, see above). The frontend supplies
+  `region_bbox` by converting a drawn ROI box to real coordinates client-side
+  (`frontend/src/lib/geo.js::roiBoxToBbox`, using the image's own `bounds_wgs84`) — the
+  frontend's own manual drag-to-mark tool only ever produces a rectangle, never a
+  `region_polygon`. A successful vision-tool call can also derive both `region_bbox`
+  and, for an elongated/curved target, `region_polygon`/`region_centroid` itself (§3,
+  §11) from its own affine-converted `bbox`/`polygon` — either the automatic
+  initial-description call (§2.2, e.g. a first question like "mark the river..." whose
+  wording alone makes that call return one) or a planner-chosen `mark_region_in_image`
+  call mid-request. The former still runs before this deterministic node, so it's
+  picked up and described the same as a
+  user-drawn region; only the latter (genuinely *after* this node already ran and found
+  nothing to describe) needs the planner to call `describe_marked_region` itself, which
+  `prompts/planner_system.md` tells it to do for that specific case.
 - The vision tool must be enabled (`SATQUERY_VISION_TOOL_ENABLED=true`) for the crop
   description half of this to run; reverse geocoding still works independently of
   that flag.
@@ -794,21 +885,68 @@ continuous conversation.
   every subsequent request for that image (so e.g. a weather question about an
   uploaded file doesn't need its location asked for separately).
   - **Drag on the preview to mark a region** — converts the drawn box into a real
-    lat/lon sub-bbox (using that same `bounds_wgs84`) and sends it two ways: as plain
-    text appended to the question (*"(Focus specifically on the region roughly bounded
-    by 85.15–85.21°E, 27.95–28.01°N.)"*, rounded, for a human-readable trace) **and**
-    as the structured `region_bbox` field, at full precision — the backend has a real
-    concept of a marked region (`describe_marked_region`, §6), not just a text hint: it
-    crops the actual GeoTIFF's own pixels to that exact bbox and describes only that
-    crop, plus reverse-geocodes the region's center for a verified place name, runs
-    automatically once per request whenever a region is marked, and other location
-    tools consulted afterward (weather, place lookup, scene identity, POI discovery)
-    prefer that marked region over the whole image.
+    lat/lon sub-bbox (using that same `bounds_wgs84`) and sends it two ways: as a
+    plain, deliberately number-free text note appended to the question (*"(Focus
+    specifically on the highlighted region of image.)"*) **and** as the structured
+    `region_bbox` field, at full precision — the backend has a real concept of a
+    marked region (`describe_marked_region`, §6), not just a text hint: it crops the
+    actual GeoTIFF's own pixels to that exact bbox and describes only that crop, plus
+    reverse-geocodes the region's center for a verified place name, runs automatically
+    once per request whenever a region is marked, and other location tools consulted
+    afterward (weather, place lookup, scene identity, POI discovery) prefer that
+    marked region over the whole image. The text note used to include the bbox's own
+    rounded coordinates — removed after an observed bug: with a region marked, the
+    same rounded numbers rode along in *every* later question's text (recap included),
+    and the model would sometimes echo them back as if they were a verified tool
+    result for an unrelated later question (e.g. "mark the area with the most
+    vegetation" got answered with the *original* marked region's coordinates, copied
+    from that note, instead of that turn's own new `mark_region_in_image` result).
+    Nothing functional depended on the note carrying numbers — `region_bbox` (full
+    precision, structured) was always the field actually driving backend behavior — so
+    dropping them from the text was a pure fix, not a feature loss. `prompts/
+    synthesis_system.md` was also tightened: it now explicitly warns against treating
+    a number that merely appears in the user's own request text (a recap, a
+    parenthetical note) as if it were a tool's verified output.
   - **The AI's own answer can mark a region back** — when `mark_region_in_image`
     returns a `bbox` (see §3), it's drawn as a second, visually distinct (solid violet,
-    tagged "AI") overlay box — suppressed for a turn where you already drew your own
-    region for that image, since your precise selection is authoritative and a second,
-    rougher AI guess for the same spot would just contradict it.
+    tagged "AI") overlay box, in the same fractional image-space coordinates the
+    frontend already uses for a user-drawn ROI. When the target was elongated/curved
+    enough that the model instead returned a `polygon`, the overlay is an SVG polygon
+    tracing that path (`ImageSlot.jsx`'s `<svg><polygon>`, same violet identity, drawn
+    *instead of* the rectangle, since `bbox` is still present as the path's own
+    envelope but would just be a looser, more misleading outline of the same feature).
+    Drawn regardless of whether a manual ROI also exists on the slot — an earlier
+    version suppressed the AI overlay entirely whenever any manual ROI was present, on
+    the assumption a later question was still "about" that same drawn region; that
+    broke a genuinely new request against the same image (drawing a region, then later
+    asking to mark something else in it) — the tool found a real, different location,
+    but it never reached the screen. The two overlays are already styled to be visually
+    distinct specifically so they don't get confused for each other, so there's no need
+    to hide one in favor of the other. Separately, on the backend, that same
+    `bbox`/`polygon` is affine-converted into exact WGS84 fields (`region_bbox`, and
+    for a polygon also `region_polygon`/`region_centroid` — §3, §11) whenever the
+    source image is a real GeoTIFF — so the AI's own located region drives the same
+    precise downstream pipeline (`describe_marked_region`, `deterministic_affine_markup`)
+    a manually drawn one does, not just a screen overlay. Note the frontend's own
+    manual drag-to-mark ROI tool only ever produces a rectangle (no click-to-trace-a-path
+    UI exists yet) — this polygon path is currently AI-drawn only.
+  - **A tool-fetched image becomes the active one, the same as an upload.** When a
+    turn's `tool_results` includes a successful `fetch_optical_imagery`/
+    `fetch_multispectral_imagery`/`fetch_sar_imagery` call — e.g. "give me the image of
+    the Yamuna river," which involves no upload at all — `App.jsx` adopts that new file
+    into the panel exactly as if you'd picked it yourself: sets it as the slot's active
+    path (so it renders via `/api/v1/raster-preview` and becomes `input_file` for the
+    *next* question too — without this, a follow-up like "mark the vegetation" would
+    have nothing to operate on, since the just-fetched file was never wired into slot
+    state), clears the previous file's now-stale ROI/AI-marked-region/knowledge-base
+    fields, and runs the same background `inspect_geotiff_metadata` call an upload
+    triggers (`lib/inspectGeotiff.js`, shared with `ImageSlot.jsx`'s own upload flow —
+    the fetch tool's own result doesn't carry `bounds_wgs84` in the shape the app needs,
+    so this second call is still required) to populate the info chip and `bounds_wgs84`.
+    In *Two images* mode, a fetched file fills whichever slot (A, then B) is still
+    empty; if both already hold a file, it's left alone rather than silently overwriting
+    a deliberate before/after comparison — the fetched file still appears as a download
+    link in the chat log's own raster gallery (`ChatMessage.jsx`) either way.
 - **Steps** — the current turn's `execution_trace`, rendered as a vertical, animated
   chain of connected step nodes (green/red/amber by outcome) — see the streaming note
   below. Structured labels only (e.g. "Plan: use Vision analysis", "Run GeoTIFF

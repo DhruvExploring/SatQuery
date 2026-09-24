@@ -473,7 +473,9 @@ def _run_scene_identity(args: dict[str, Any]) -> dict[str, Any]:
         if not bbox:
             raise ValueError("resolve_scene_identity requires bbox.")
 
-        return resolve_scene_identity(bbox=bbox, query=args.get("query"))
+        return resolve_scene_identity(
+            bbox=bbox, query=args.get("query"), landmark_names=args.get("landmark_names"),
+        )
 
     except Exception as exc:
         return _wrap_tool_error(exc)
@@ -582,6 +584,58 @@ def _resolve_viewable_image(image_path: str) -> str:
         return rendered.name
 
 
+def _geometry_to_region_fields(
+    image_path: str, bbox: list[float] | None, polygon: list[list[float]] | None
+) -> dict[str, Any] | None:
+    """Best-effort: convert a vision model's fractional image-space geometry
+    -- mark_region_in_image's `bbox` and/or `polygon` -- into exact WGS84
+    region fields via the source GeoTIFF's own affine transform (Tool 11's
+    fractional_bbox_to_wgs84 / polygon_pixels_to_wgs84), so a VLM-identified
+    region can drive the same precise downstream pipeline
+    (describe_marked_region, deterministic_affine_markup) as a user-drawn
+    region_bbox instead of staying a plain image-space rectangle.
+
+    Prefers `polygon` when present: an elongated/curved feature's own path
+    gives both a tighter bounding envelope and a far more accurate anchor
+    point (its path centroid) than a loose bbox's own midpoint would --
+    that midpoint can land nowhere near the actual feature. Falls back to
+    `bbox` alone otherwise, using its envelope's midpoint as the anchor
+    point for consistency with the polygon case.
+
+    Returns None when image_path isn't a georeferenced raster (e.g. an
+    already-rendered PNG/JPEG with no CRS) -- the caller should treat that
+    as "no geo fields available," not an error.
+    """
+    try:
+        from Tool_11_deterministic_affine_markup.deterministic_affine_markup import (
+            fractional_bbox_to_wgs84,
+            polygon_pixels_to_wgs84,
+        )
+
+        if polygon:
+            geo = polygon_pixels_to_wgs84(image_path, [tuple(p) for p in polygon])
+            return {
+                "region_bbox": geo["bbox_wgs84"],
+                "region_polygon": geo["polygon_wgs84"],
+                "region_centroid": geo["centroid_wgs84"],
+            }
+        if bbox:
+            geo = fractional_bbox_to_wgs84(image_path, tuple(bbox))
+            bbox_wgs84 = geo["bbox_wgs84"]
+            return {
+                "region_bbox": bbox_wgs84,
+                "region_bbox_corners": geo["corners_wgs84"],
+                "region_centroid": {
+                    "latitude": (bbox_wgs84[1] + bbox_wgs84[3]) / 2.0,
+                    "longitude": (bbox_wgs84[0] + bbox_wgs84[2]) / 2.0,
+                },
+            }
+        return None
+    except Exception as exc:
+        logger.info("[VISION GEOMETRY GEOCODE] skipped for %s: %s", image_path, exc)
+        return None
+
+
 def _run_vlm_analysis(args: dict[str, Any]) -> dict[str, Any]:
     if not settings.vision_tool_enabled:
         return {
@@ -620,6 +674,18 @@ def _run_vlm_analysis(args: dict[str, Any]) -> dict[str, Any]:
             result.get("provider", settings.vision_tool_provider),
             len(result.get("text") or ""),
         )
+
+        bbox = result.get("bbox")
+        polygon = result.get("polygon")
+        if bbox is not None or polygon:
+            geo_fields = _geometry_to_region_fields(image_path, bbox, polygon)
+            if geo_fields is not None:
+                result.update(geo_fields)
+                logger.info(
+                    "[VISION GEOMETRY GEOCODE] %s -> region_bbox=%s polygon=%s",
+                    image_path, geo_fields["region_bbox"], bool(polygon),
+                )
+
         return {"status": "success", **result}
 
     except Exception as exc:
@@ -711,6 +777,7 @@ def _run_describe_region(args: dict[str, Any]) -> dict[str, Any]:
 
     image_path = args.get("image_path")
     region_bbox = args.get("region_bbox")
+    region_polygon = args.get("region_polygon")
     if not image_path:
         return {
             "status": "error",
@@ -729,12 +796,17 @@ def _run_describe_region(args: dict[str, Any]) -> dict[str, Any]:
         }
 
     query = args.get("query") or "Describe what is in this marked region."
-    logger.info("[REGION DESCRIBE] image=%s region_bbox=%s query=%r", image_path, region_bbox, query)
+    logger.info(
+        "[REGION DESCRIBE] image=%s region_bbox=%s polygon=%s query=%r",
+        image_path, region_bbox, bool(region_polygon), query,
+    )
 
     try:
         from backend.rendering.raster_preview import render_geotiff_region_preview
 
-        png_bytes, region_info = render_geotiff_region_preview(image_path, region_bbox)
+        png_bytes, region_info = render_geotiff_region_preview(
+            image_path, region_bbox, polygon_wgs84=region_polygon,
+        )
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as rendered:
             rendered.write(png_bytes)
             cropped_path = rendered.name

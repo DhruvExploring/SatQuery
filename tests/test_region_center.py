@@ -62,3 +62,23 @@ def test_scene_identity_and_poi_discovery_use_region_bbox_over_whole_bbox():
     state = empty_state(query="what's here?", bbox=FULL_BBOX, region_bbox=REGION)
     assert trusted_args_for_tool(TOOL_SCENE_IDENTITY, state)["bbox"] == REGION
     assert trusted_args_for_tool(TOOL_POI_DISCOVERY, state)["bbox"] == REGION
+
+
+def test_weather_prefers_region_centroid_over_bbox_midpoint():
+    """A diagonal/elongated marked region (e.g. a river's path) can have a
+    centroid nowhere near region_bbox's own midpoint -- region_centroid
+    (from mark_region_in_image's affine-converted polygon) must win."""
+    centroid = {"latitude": 28.599, "longitude": 77.151}  # near REGION's corner, not its midpoint (28.575, 77.175)
+    state = empty_state(
+        query="weather here", bbox=FULL_BBOX, region_bbox=REGION, region_centroid=centroid,
+    )
+    args = trusted_args_for_tool(TOOL_WEATHER, state)
+    assert args["latitude"] == pytest.approx(28.599)
+    assert args["longitude"] == pytest.approx(77.151)
+
+
+def test_weather_falls_back_to_bbox_midpoint_without_a_centroid():
+    state = empty_state(query="weather here", bbox=FULL_BBOX, region_bbox=REGION)
+    args = trusted_args_for_tool(TOOL_WEATHER, state)
+    assert args["latitude"] == pytest.approx(28.575)
+    assert args["longitude"] == pytest.approx(77.175)

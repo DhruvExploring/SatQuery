@@ -85,6 +85,57 @@ def test_region_crop_requires_georeferencing(tmp_path):
         render_geotiff_region_preview(str(tif_path), [10.25, 20.25, 10.75, 20.75])
 
 
+def test_region_crop_masks_pixels_outside_a_polygon(tmp_path):
+    """polygon_wgs84 (an elongated feature's own path, e.g. from
+    mark_region_in_image's affine-converted polygon) masks out every pixel
+    outside it -- so a vision model sees only the feature's actual shape,
+    not region_bbox's whole (necessarily wider, for anything non-rectangular)
+    bounding rectangle."""
+    import io
+
+    from PIL import Image
+
+    tif_path = tmp_path / "scene.tif"
+    rng = np.random.default_rng(42)
+    transform = from_bounds(*_BBOX, 100, 100)
+    data = rng.integers(50, 200, size=(3, 100, 100), dtype="uint8")
+    with rasterio.open(
+        tif_path, "w", driver="GTiff", height=100, width=100, count=3,
+        dtype="uint8", crs="EPSG:4326", transform=transform,
+    ) as dst:
+        dst.write(data)
+
+    # Covers only the west (left) half of the requested region_bbox.
+    polygon = [
+        {"latitude": 20.0, "longitude": 10.0},
+        {"latitude": 21.0, "longitude": 10.0},
+        {"latitude": 21.0, "longitude": 10.5},
+        {"latitude": 20.0, "longitude": 10.5},
+    ]
+    png_bytes, region_info = render_geotiff_region_preview(
+        str(tif_path), [10.0, 20.0, 11.0, 21.0], polygon_wgs84=polygon,
+    )
+    assert region_info["polygon_masked"] is True
+
+    image = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    w, h = image.size
+    # Well inside the polygon's half -> original random [50,200) data, never
+    # exactly black.
+    assert image.getpixel((w // 8, h // 2)) != (0, 0, 0)
+    # Well outside the polygon (east half) -> masked to black.
+    assert image.getpixel((w * 7 // 8, h // 2)) == (0, 0, 0)
+
+
+def test_region_crop_without_polygon_is_not_masked(tmp_path):
+    tif_path = tmp_path / "scene.tif"
+    _write_synthetic_tif(tif_path)
+
+    png_bytes, region_info = render_geotiff_region_preview(
+        str(tif_path), [10.25, 20.25, 10.75, 20.75]
+    )
+    assert region_info["polygon_masked"] is False
+
+
 def test_tool6_reports_pixel_resolution_and_corners(tmp_path):
     from Tool_6_inspect_geotiff_metadata.inspect_geotiff_metadata import (
         GeoTIFFInspectionRequest,

@@ -16,7 +16,7 @@ from typing import Any
 
 import numpy as np
 import rasterio
-from PIL import Image
+from PIL import Image, ImageDraw
 from rasterio.enums import Resampling
 from rasterio.errors import WindowError as RasterioWindowError
 from rasterio.warp import transform_bounds
@@ -147,12 +147,63 @@ def render_geotiff_preview(
     return buf.getvalue()
 
 
+def _mask_to_polygon(
+    image: Image.Image,
+    polygon_wgs84: list[dict[str, float]],
+    src_crs: Any,
+    src_transform: Any,
+    window: Window,
+    out_width: int,
+    out_height: int,
+) -> Image.Image:
+    """Fills every pixel outside polygon_wgs84 with a neutral color, so a
+    vision model looking at this crop actually sees only the marked
+    region's own path/outline (e.g. a river's course) rather than its
+    whole bounding rectangle -- the same "axis-aligned box includes far
+    more than the feature" problem region_bbox alone can't fix, resolved
+    here by masking pixels instead of just tightening the crop's own
+    coordinates.
+
+    Reuses Tool 11's own affine math (the single source of truth for pixel
+    <-> world conversion in this project) to place each WGS84 vertex: WGS84
+    -> native CRS -> full-raster pixel -> pixel relative to this crop's own
+    window -> pixel in this (possibly downsampled) output image.
+    """
+    from Tool_11_deterministic_affine_markup.deterministic_affine_markup import (
+        compute_inverse_affine_pixel,
+        reproject_wgs84_to_native,
+    )
+
+    affine_tuple = (
+        src_transform.a, src_transform.b, src_transform.c,
+        src_transform.d, src_transform.e, src_transform.f,
+    )
+    scale_x = out_width / window.width if window.width else 1.0
+    scale_y = out_height / window.height if window.height else 1.0
+
+    points: list[tuple[float, float]] = []
+    for vertex in polygon_wgs84:
+        lon, lat = vertex["longitude"], vertex["latitude"]
+        x_native, y_native = reproject_wgs84_to_native(lon, lat, src_crs)
+        c_full, r_full = compute_inverse_affine_pixel(x_native, y_native, affine_tuple)
+        c_out = (c_full - window.col_off) * scale_x
+        r_out = (r_full - window.row_off) * scale_y
+        points.append((c_out, r_out))
+
+    mask = Image.new("L", (out_width, out_height), 0)
+    ImageDraw.Draw(mask).polygon(points, fill=255)
+
+    background = Image.new(image.mode, image.size, 0)
+    return Image.composite(image, background, mask)
+
+
 def render_geotiff_region_preview(
     path: str,
     bbox_wgs84: list[float],
     band_selection: list[int] | None = None,
     size: int = 768,
     categorical: bool | None = None,
+    polygon_wgs84: list[dict[str, float]] | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """Render only the pixel window covered by a WGS84 bbox, cropping the
     source raster itself rather than the whole rendered scene.
@@ -160,6 +211,15 @@ def render_geotiff_region_preview(
     Used to ground a description in a region the user actually marked/drew
     (e.g. a frontend ROI box converted to real-world coordinates), instead of
     asking a vision model to visually re-locate that region in the full image.
+
+    polygon_wgs84: an elongated/curved feature's own path (an ordered list of
+    {"latitude", "longitude"} vertices -- e.g. mark_region_in_image's
+    affine-converted polygon, registry.py::TOOL_DESCRIBE_REGION), if more
+    precise than region_bbox's plain rectangle. When given, every pixel
+    outside that path is masked out (see _mask_to_polygon) before the crop
+    is handed to the vision model, so region_bbox's own bounding rectangle
+    -- necessarily wider than the feature for anything non-rectangular --
+    never leaks extraneous context into the description.
 
     Returns (png_bytes, region_info): region_info reports the pixel window
     actually read and its real-world extent *after* clamping to the raster's
@@ -217,6 +277,8 @@ def render_geotiff_region_preview(
             resampling=resampling,
         )
         nodata = src.nodata
+        native_crs = src.crs
+        native_transform = src.transform
 
         achieved_native = window_bounds(window, src.transform)
         achieved_wgs84 = (
@@ -226,6 +288,10 @@ def render_geotiff_region_preview(
         )
 
     image = _finalize_preview_image(data, nodata, categorical, indices)
+    if polygon_wgs84 and len(polygon_wgs84) >= 3:
+        image = _mask_to_polygon(
+            image, polygon_wgs84, native_crs, native_transform, window, out_width, out_height,
+        )
     buf = io.BytesIO()
     image.save(buf, format="PNG")
 
@@ -245,5 +311,6 @@ def render_geotiff_region_preview(
             "max_lon": round(achieved_wgs84[2], 6),
             "max_lat": round(achieved_wgs84[3], 6),
         },
+        "polygon_masked": bool(polygon_wgs84 and len(polygon_wgs84) >= 3),
     }
     return buf.getvalue(), region_info
