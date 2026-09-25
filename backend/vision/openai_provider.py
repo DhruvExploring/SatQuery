@@ -157,6 +157,7 @@ class OpenAIVisionProvider:
             "model": settings.vision_tool_model,
             "api_key": settings.vision_tool_api_key,
             "temperature": 0,
+            "max_tokens": 1500,
             "timeout": settings.vision_tool_timeout_s,
         }
         if settings.vision_tool_base_url:
@@ -202,6 +203,7 @@ class OpenAIVisionProvider:
             "model": settings.vision_tool_model,
             "api_key": settings.vision_tool_api_key,
             "temperature": 0,
+            "max_tokens": 1500,
             "timeout": settings.vision_tool_timeout_s,
         }
         if settings.vision_tool_base_url:

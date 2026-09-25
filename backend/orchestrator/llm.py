@@ -140,6 +140,7 @@ def _build_base_llm() -> Any:
             "model": settings.orchestrator_model,
             "api_key": settings.orchestrator_api_key,
             "temperature": 0,
+            "max_tokens": 1500,
         }
         if settings.orchestrator_base_url:
             kwargs["base_url"] = settings.orchestrator_base_url

@@ -16,6 +16,16 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Literal, Optional, List, Dict, Any, Tuple
 
+# Sanitize PROJ environment so rasterio uses its own bundled PROJ database
+try:
+    import rasterio
+    _rproj = Path(rasterio.__file__).parent / "proj_data"
+    if (_rproj / "proj.db").is_file():
+        os.environ["PROJ_LIB"] = str(_rproj)
+        os.environ["PROJ_DATA"] = str(_rproj)
+except Exception:
+    pass
+
 import numpy as np
 import rasterio
 from rasterio.warp import transform_bounds

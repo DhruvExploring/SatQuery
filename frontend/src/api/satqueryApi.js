@@ -29,6 +29,16 @@ export async function checkHealth() {
   }
 }
 
+export async function fetchModelsStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/models`, { method: 'GET' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * POST /api/v1/query with a raw payload matching the backend's QueryRequest
  * fields directly (query, input_file, raster_before_path, bbox, latitude,
