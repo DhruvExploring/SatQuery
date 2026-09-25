@@ -25,16 +25,25 @@ _env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env_path)
 
 
+def _clean_str(value: str | None) -> str | None:
+    if value is None:
+        return None
+    val = value.strip().strip("'\"").strip()
+    return val if val else None
+
+
 def _as_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    cleaned = value.strip().strip("'\"").strip().lower()
+    return cleaned in {"1", "true", "t", "yes", "y", "on"}
 
 
 def _as_origin_list(value: str | None) -> list[str]:
-    if value is None or not value.strip():
+    cleaned = _clean_str(value)
+    if cleaned is None:
         return ["*"]
-    return [origin.strip() for origin in value.split(",") if origin.strip()]
+    return [origin.strip().strip("'\"") for origin in cleaned.split(",") if origin.strip()]
 
 
 @dataclass(frozen=True)
@@ -74,8 +83,8 @@ class Settings:
 
 def load_settings() -> Settings:
     orchestrator_provider = (
-        os.getenv("SATQUERY_ORCHESTRATOR_PROVIDER") or "mock"
-    ).strip().lower()
+        _clean_str(os.getenv("SATQUERY_ORCHESTRATOR_PROVIDER")) or "mock"
+    ).lower()
     if orchestrator_provider not in {"mock", "openai", "anthropic"}:
         raise ValueError(
             "SATQUERY_ORCHESTRATOR_PROVIDER must be one of: mock, openai, anthropic. "
@@ -84,51 +93,51 @@ def load_settings() -> Settings:
 
     vision_tool_enabled = _as_bool(os.getenv("SATQUERY_VISION_TOOL_ENABLED"), False)
     vision_tool_provider = (
-        os.getenv("SATQUERY_VISION_TOOL_PROVIDER") or "openai"
-    ).strip().lower()
+        _clean_str(os.getenv("SATQUERY_VISION_TOOL_PROVIDER")) or "openai"
+    ).lower()
     if vision_tool_enabled and vision_tool_provider not in {"openai", "local"}:
         raise ValueError(
             "SATQUERY_VISION_TOOL_PROVIDER must be one of: openai, local. "
             f"Got {vision_tool_provider!r}."
         )
 
-    orchestrator_api_key = os.getenv("SATQUERY_ORCHESTRATOR_API_KEY") or None
+    orchestrator_api_key = _clean_str(os.getenv("SATQUERY_ORCHESTRATOR_API_KEY"))
     if orchestrator_api_key is None:
         if orchestrator_provider == "openai":
-            orchestrator_api_key = os.getenv("OPENAI_API_KEY") or None
+            orchestrator_api_key = _clean_str(os.getenv("OPENAI_API_KEY"))
         elif orchestrator_provider == "anthropic":
-            orchestrator_api_key = os.getenv("ANTHROPIC_API_KEY") or None
+            orchestrator_api_key = _clean_str(os.getenv("ANTHROPIC_API_KEY"))
 
-    vision_tool_api_key = os.getenv("SATQUERY_VISION_TOOL_API_KEY") or None
+    vision_tool_api_key = _clean_str(os.getenv("SATQUERY_VISION_TOOL_API_KEY"))
     if vision_tool_api_key is None and vision_tool_provider == "openai":
-        vision_tool_api_key = os.getenv("OPENAI_API_KEY") or None
+        vision_tool_api_key = _clean_str(os.getenv("OPENAI_API_KEY"))
 
     return Settings(
         orchestrator_provider=orchestrator_provider,
-        orchestrator_model=os.getenv("SATQUERY_ORCHESTRATOR_MODEL", "gpt-5.2"),
+        orchestrator_model=_clean_str(os.getenv("SATQUERY_ORCHESTRATOR_MODEL")) or "gpt-5.2",
         orchestrator_api_key=orchestrator_api_key,
-        orchestrator_base_url=os.getenv("SATQUERY_ORCHESTRATOR_BASE_URL") or None,
+        orchestrator_base_url=_clean_str(os.getenv("SATQUERY_ORCHESTRATOR_BASE_URL")),
         orchestrator_synthesize_answer=_as_bool(
             os.getenv("SATQUERY_ORCHESTRATOR_SYNTHESIZE_ANSWER"), True
         ),
         vision_tool_enabled=vision_tool_enabled,
         vision_tool_provider=vision_tool_provider,
-        vision_tool_model=os.getenv("SATQUERY_VISION_TOOL_MODEL", "gpt-4o-mini"),
+        vision_tool_model=_clean_str(os.getenv("SATQUERY_VISION_TOOL_MODEL")) or "gpt-4o-mini",
         vision_tool_api_key=vision_tool_api_key,
-        vision_tool_base_url=os.getenv("SATQUERY_VISION_TOOL_BASE_URL") or None,
+        vision_tool_base_url=_clean_str(os.getenv("SATQUERY_VISION_TOOL_BASE_URL")),
         vision_tool_timeout_s=float(
-            os.getenv("SATQUERY_VISION_TOOL_TIMEOUT_S", "60")
+            _clean_str(os.getenv("SATQUERY_VISION_TOOL_TIMEOUT_S")) or "60"
         ),
         cors_allowed_origins=tuple(
             _as_origin_list(os.getenv("SATQUERY_CORS_ALLOWED_ORIGINS"))
         ),
-        backend_port=int(os.getenv("SATQUERY_BACKEND_PORT", "8000")),
-        tool_output_dir=os.getenv("SATQUERY_TOOL_OUTPUT_DIR", "sih_satellite_data"),
-        memory_backend=os.getenv("SATQUERY_MEMORY_BACKEND", "none"),
-        memory_db_url=os.getenv("SATQUERY_MEMORY_DB_URL") or None,
-        memory_embed_model=os.getenv(
-            "SATQUERY_MEMORY_EMBED_MODEL",
-            "openai:text-embedding-3-small",
+        backend_port=int(_clean_str(os.getenv("SATQUERY_BACKEND_PORT")) or "8000"),
+        tool_output_dir=_clean_str(os.getenv("SATQUERY_TOOL_OUTPUT_DIR")) or "sih_satellite_data",
+        memory_backend=_clean_str(os.getenv("SATQUERY_MEMORY_BACKEND")) or "none",
+        memory_db_url=_clean_str(os.getenv("SATQUERY_MEMORY_DB_URL")),
+        memory_embed_model=(
+            _clean_str(os.getenv("SATQUERY_MEMORY_EMBED_MODEL"))
+            or "openai:text-embedding-3-small"
         ),
     )
 

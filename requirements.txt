@@ -6,9 +6,8 @@ pydantic>=2.5.0
 fastmcp>=0.1.0
 python-dotenv>=1.0.0
 pillow>=10.0.0
-# NotRequired (backend/orchestrator/state.py) is stdlib typing only on
-# Python 3.11+; this project supports 3.10+, so it's imported from here
-# directly rather than relying on it as some other package's transitive dep.
+# NotRequired (backend/orchestrator/state.py) is stdlib typing on Python 3.11+;
+# typing_extensions is kept for compatibility and typing utilities.
 typing_extensions>=4.7.0
 
 shapely

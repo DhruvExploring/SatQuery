@@ -14,8 +14,20 @@ mkdir -p logs
 : > logs/frontend.log
 
 if [ ! -d .venv ]; then
-  echo "No .venv found — creating one and installing backend dependencies..."
-  python3 -m venv .venv
+  echo "No .venv found — creating one with Python 3.12 and installing backend dependencies..."
+  PYTHON_BIN="python3.12"
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    if [ -x "/opt/homebrew/bin/python3.12" ]; then
+      PYTHON_BIN="/opt/homebrew/bin/python3.12"
+    elif [ -x "/usr/local/bin/python3.12" ]; then
+      PYTHON_BIN="/usr/local/bin/python3.12"
+    else
+      echo "Error: Python 3.12 is required (e.g. 'brew install python@3.12')." >&2
+      exit 1
+    fi
+  fi
+  "$PYTHON_BIN" -m venv .venv
+  ./.venv/bin/pip install --upgrade pip
   ./.venv/bin/pip install -r requirements.txt
 fi
 
