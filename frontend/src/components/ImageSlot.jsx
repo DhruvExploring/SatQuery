@@ -18,7 +18,7 @@ const clamp01 = (v) => Math.min(1, Math.max(0, v));
  * whatever the first update (before the upload started) had just cleared.
  * `onReset` fully clears the slot (a patch/merge can't remove keys).
  */
-export default function ImageSlot({ label, slot, onChange, onReset, disabled }) {
+export default function ImageSlot({ label, slot, onChange, onReset, disabled, onOpenModal }) {
   const fileInputRef = useRef(null);
   const imgWrapRef = useRef(null);
   const uploadTokenRef = useRef(0);
@@ -35,7 +35,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
     e.target.value = '';
     if (!picked) return;
     if (!/\.(tif|tiff)$/i.test(picked.name)) {
-      onChange({ error: 'Only .tif/.tiff files are accepted.' });
+      onChange({ error: 'Only .tif/.tiff GeoTIFF files are accepted.' });
       return;
     }
 
@@ -54,7 +54,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
     });
 
     const uploaded = await uploadRasterFile(picked);
-    if (myToken !== uploadTokenRef.current) return; // a newer pick superseded this one
+    if (myToken !== uploadTokenRef.current) return;
 
     if (!uploaded.ok) {
       onChange({ uploading: false, error: uploaded.error });
@@ -73,12 +73,12 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
   const runInspection = async (path, myToken) => {
     onChange({ inspecting: true });
     const patch = await inspectGeotiff(path);
-    if (myToken !== uploadTokenRef.current) return; // superseded while this was in flight
+    if (myToken !== uploadTokenRef.current) return;
     onChange({ inspecting: false, ...(patch || {}) });
   };
 
   const clearSlot = () => {
-    uploadTokenRef.current += 1; // discard any in-flight upload/inspection for the old file
+    uploadTokenRef.current += 1;
     onReset();
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -113,7 +113,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
     const h = Math.abs(dragCurrent.y - dragStart.y);
     setDragStart(null);
     setDragCurrent(null);
-    if (w < 0.02 || h < 0.02) return; // treat as an accidental click, not a real box
+    if (w < 0.02 || h < 0.02) return;
     onChange({ roi: { x, y, w, h } });
   };
 
@@ -129,18 +129,50 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
   const roiBbox = slot.roi && slot.boundsWgs84 ? roiBoxToBbox(slot.roi, slot.boundsWgs84) : null;
 
   return (
-    <div className="image-slot">
-      <div className="image-slot-head">
-        <span className="image-slot-label">{label}</span>
-        {slot.uploadedPath && (
-          <button type="button" className="btn-link" onClick={clearSlot} disabled={disabled}>
-            Remove
-          </button>
-        )}
+    <div className="sat-visualizer-slot">
+      {/* Top Header Row */}
+      <div className="sat-slot-header">
+        <div className="slot-title-group">
+          <span className="slot-role-tag">{label}</span>
+          {slot.originalFilename && (
+            <span className="slot-filename" title={slot.originalFilename}>
+              {slot.originalFilename}
+            </span>
+          )}
+        </div>
+
+        <div className="slot-header-actions">
+          {slot.uploadedPath && onOpenModal && (
+            <button
+              type="button"
+              className="slot-action-btn"
+              onClick={() => onOpenModal({ path: slot.uploadedPath, label: slot.originalFilename })}
+              title="Inspect Fullscreen (1536px)"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+              </svg>
+              <span>Expand</span>
+            </button>
+          )}
+
+          {slot.uploadedPath && (
+            <button
+              type="button"
+              className="slot-action-btn btn-danger-soft"
+              onClick={clearSlot}
+              disabled={disabled}
+              title="Remove this satellite scene"
+            >
+              <span>Clear</span>
+            </button>
+          )}
+        </div>
       </div>
 
+      {/* Main Viewport or Dropzone */}
       {!slot.uploadedPath ? (
-        <label className="image-drop">
+        <label className={`sat-dropzone ${slot.uploading ? 'uploading' : ''}`}>
           <input
             ref={fileInputRef}
             type="file"
@@ -149,57 +181,75 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
             disabled={disabled || slot.uploading}
             hidden
           />
-          {slot.uploading ? 'Uploading…' : 'Click to choose a .tif / .tiff file'}
+          <div className="dropzone-content">
+            <div className="dropzone-icon-ring">
+              {slot.uploading ? (
+                <div className="radar-spinner-pulse" />
+              ) : (
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+              )}
+            </div>
+            <div className="dropzone-text-block">
+              <span className="dropzone-primary-text">
+                {slot.uploading ? 'Uploading & Ingesting GeoTIFF…' : 'Drop satellite GeoTIFF or click to browse'}
+              </span>
+              <span className="dropzone-secondary-text">
+                Sentinel-1 SAR, Sentinel-2 Optical/MSI, Landsat, or custom GeoTIFFs (.tif, .tiff)
+              </span>
+            </div>
+          </div>
         </label>
       ) : (
-        <div className="image-preview-wrap">
+        <div className="sat-viewport-frame">
           <div
-            className="image-preview"
+            className="sat-image-canvas"
             ref={imgWrapRef}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={finishDrag}
             onPointerLeave={finishDrag}
           >
-            {!imgFailed && (
+            {!imgFailed ? (
               <img
-                src={rasterPreviewUrl(slot.uploadedPath, 640)}
+                src={rasterPreviewUrl(slot.uploadedPath, 1200)}
                 alt={slot.originalFilename}
                 draggable={false}
                 onError={() => setImgFailed(true)}
               />
+            ) : (
+              <div className="sat-preview-failed">
+                <span>⚠️ Could not render raster preview</span>
+              </div>
             )}
-            {imgFailed && <div className="image-preview-failed">Could not load a preview for this file.</div>}
+
+            {/* ROI Drag Box */}
             {liveBox && (
               <div
-                className="roi-box"
+                className="sat-roi-rect"
                 style={{
                   left: `${liveBox.x * 100}%`,
                   top: `${liveBox.y * 100}%`,
                   width: `${liveBox.w * 100}%`,
                   height: `${liveBox.h * 100}%`
                 }}
-              />
+              >
+                <span className="roi-rect-tag">ROI Focus</span>
+              </div>
             )}
+
+            {/* AI Model Detections */}
             {slot.modelPolygon ? (
-              <>
-                <svg className="model-polygon" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  <polygon points={slot.modelPolygon.map(([x, y]) => `${x * 100},${y * 100}`).join(' ')} />
-                </svg>
-                <div
-                  className="model-polygon-anchor"
-                  style={{
-                    left: `${Math.min(...slot.modelPolygon.map((p) => p[0])) * 100}%`,
-                    top: `${Math.min(...slot.modelPolygon.map((p) => p[1])) * 100}%`
-                  }}
-                >
-                  <span className="model-bbox-tag">AI</span>
-                </div>
-              </>
+              <svg className="sat-model-polygon" viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polygon points={slot.modelPolygon.map(([x, y]) => `${x * 100},${y * 100}`).join(' ')} />
+              </svg>
             ) : (
               slot.modelBbox && (
                 <div
-                  className="model-bbox"
+                  className="sat-model-bbox"
                   style={{
                     left: `${slot.modelBbox[0] * 100}%`,
                     top: `${slot.modelBbox[1] * 100}%`,
@@ -207,56 +257,89 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled }) 
                     height: `${(slot.modelBbox[3] - slot.modelBbox[1]) * 100}%`
                   }}
                 >
-                  <span className="model-bbox-tag">AI</span>
+                  <span className="model-bbox-tag">AI Detection</span>
                 </div>
               )
             )}
+
+            {/* Hint overlay */}
+            <div className="sat-canvas-hint">Drag a box on the image to focus your query</div>
           </div>
-          <div className="image-preview-hint">Drag on the image to mark the region you're asking about.</div>
+
+          {/* ROI status pills */}
           {slot.roi && (
-            <div className="roi-readout">
-              <span>{roiBbox ? `Region: ${formatBbox(roiBbox)}` : 'Region marked'}</span>
-              <button type="button" className="btn-link" onClick={() => onChange({ roi: null })} disabled={disabled}>
-                Clear region
-              </button>
-            </div>
-          )}
-          {(slot.modelPolygon || slot.modelBbox) && (
-            <div className="roi-readout">
-              <span>
-                {slot.modelPolygon
-                  ? "AI traced a region's path in its answer (rough estimate, not precise)"
-                  : 'AI marked a region in its answer (rough estimate, not precise)'}
+            <div className="sat-roi-chip-bar">
+              <span className="roi-active-label">
+                🎯 {roiBbox ? `Region: ${formatBbox(roiBbox)}` : 'Custom Region Marked'}
               </span>
               <button
                 type="button"
-                className="btn-link"
+                className="btn-roi-clear"
+                onClick={() => onChange({ roi: null })}
+                disabled={disabled}
+              >
+                Clear Region
+              </button>
+            </div>
+          )}
+
+          {/* AI Marked Region Clear Bar */}
+          {(slot.modelPolygon || slot.modelBbox) && (
+            <div className="sat-roi-chip-bar ai-detected">
+              <span className="roi-active-label">
+                ✨ AI identified region from analysis
+              </span>
+              <button
+                type="button"
+                className="btn-roi-clear"
                 onClick={() => onChange({ modelBbox: null, modelPolygon: null })}
                 disabled={disabled}
               >
-                Clear
+                Clear AI Overlay
               </button>
+            </div>
+          )}
+
+          {/* Compact TIFF Metadata Strip Placed Near Image */}
+          {slot.info && (
+            <div className="compact-tiff-bar">
+              <span className="tiff-chip" title="Dimensions">
+                <span className="chip-icon">📐</span>
+                <span>{slot.info.width} × {slot.info.height}</span>
+              </span>
+              <span className="tiff-chip" title="Bands">
+                <span className="chip-icon">📊</span>
+                <span>{slot.info.bandCount} band{slot.info.bandCount > 1 ? 's' : ''}</span>
+              </span>
+              {slot.info.crs && (
+                <span className="tiff-chip" title="CRS">
+                  <span className="chip-icon">🌐</span>
+                  <span>{slot.info.crs}</span>
+                </span>
+              )}
+              <span className="tiff-chip" title="Georeference">
+                <span className="chip-icon">🛰️</span>
+                <span>{slot.info.georeferenced ? 'Georeferenced' : 'Unreferenced'}</span>
+              </span>
+              {slot.info.pixelSizeWgs84Degrees && (
+                <span className="tiff-chip" title="Ground Sampling Distance / Pixel size">
+                  <span className="chip-icon">🎯</span>
+                  <span>{slot.info.pixelSizeWgs84Degrees.lon_per_pixel.toExponential(2)}°/px</span>
+                </span>
+              )}
+            </div>
+          )}
+
+          {slot.inspecting && (
+            <div className="compact-tiff-bar inspecting">
+              <span className="radar-mini-pulse" />
+              <span>Inspecting GeoTIFF metadata…</span>
             </div>
           )}
         </div>
       )}
 
-      {slot.error && <div className="image-slot-error">{slot.error}</div>}
-
-      {slot.info && (
-        <div className="tool-badge tool-badge-success tool-badge-quiet">
-          GeoTIFF inspection ✓ · {slot.info.width}×{slot.info.height} · {slot.info.bandCount} band(s) ·{' '}
-          {slot.info.crs} · {slot.info.georeferenced ? 'georeferenced' : 'not georeferenced'}
-          {slot.info.pixelSizeWgs84Degrees && (
-            <>
-              {' '}
-              · {slot.info.pixelSizeWgs84Degrees.lon_per_pixel.toExponential(3)}°lon/px,{' '}
-              {slot.info.pixelSizeWgs84Degrees.lat_per_pixel.toExponential(3)}°lat/px
-            </>
-          )}
-        </div>
-      )}
-      {slot.inspecting && <div className="tool-badge tool-badge-pending tool-badge-quiet">Inspecting GeoTIFF…</div>}
+      {slot.error && <div className="sat-slot-error">{slot.error}</div>}
     </div>
   );
 }

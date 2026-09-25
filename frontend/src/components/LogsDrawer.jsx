@@ -1,29 +1,49 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { describeStep } from '../lib/executionSteps';
 
 export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, rawToolResults, backendUp, isRunning }) {
   const [tab, setTab] = useState('trace'); // 'trace' | 'errors' | 'raw'
+  const [copiedRaw, setCopiedRaw] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   const errorCount = (errors?.length || 0) + (backendUp === false ? 1 : 0);
 
+  const handleCopyRaw = () => {
+    if (!rawToolResults) return;
+    navigator.clipboard?.writeText(JSON.stringify(rawToolResults, null, 2));
+    setCopiedRaw(true);
+    setTimeout(() => setCopiedRaw(false), 2000);
+  };
+
   return (
     <div className="logs-drawer-backdrop" onClick={onClose}>
       <aside className="logs-drawer-panel" onClick={(e) => e.stopPropagation()}>
+        {/* Drawer Header */}
         <div className="logs-drawer-header">
           <div className="logs-header-title">
             <span className="logs-icon">⚙️</span>
             <div>
-              <h3>System Logs & Telemetry</h3>
-              <p>Real-time execution trace, network diagnostics, and tool outputs</p>
+              <h3>Engine Telemetry & Trace</h3>
+              <p>Node steps, execution timings, and tool outputs</p>
             </div>
           </div>
-          <button type="button" className="btn-close-drawer" onClick={onClose}>
+          <button type="button" className="btn-close-drawer" onClick={onClose} title="Close (Esc)">
             ✕
           </button>
         </div>
 
+        {/* Tab Navigation */}
         <div className="logs-tabs-nav">
           <button
             type="button"
@@ -38,7 +58,7 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
             className={`logs-tab-btn ${tab === 'errors' ? 'active' : ''}`}
             onClick={() => setTab('errors')}
           >
-            <span>Errors & Diagnostics</span>
+            <span>Errors ({errorCount})</span>
             {errorCount > 0 && <span className="error-count-pill">{errorCount}</span>}
           </button>
           <button
@@ -46,10 +66,11 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
             className={`logs-tab-btn ${tab === 'raw' ? 'active' : ''}`}
             onClick={() => setTab('raw')}
           >
-            <span>Tool Telemetry (JSON)</span>
+            <span>Raw Data</span>
           </button>
         </div>
 
+        {/* Drawer Body */}
         <div className="logs-drawer-body">
           {tab === 'trace' && (
             <div className="trace-log-view">
@@ -61,22 +82,22 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
                       <div key={i} className={`trace-item ${step.ok === false ? 'item-err' : 'item-ok'}`}>
                         <div className="trace-node-badge">
                           <span className="node-idx">#{i + 1}</span>
-                          <strong>{step.label}</strong>
+                          <span className="node-name">{step.label}</span>
+                          {row.timestamp && <span className="trace-time">{row.timestamp}</span>}
                         </div>
                         {row.summary && <p className="trace-summary">{row.summary}</p>}
-                        {row.timestamp && <span className="trace-time">{row.timestamp}</span>}
                       </div>
                     );
                   })}
                 </div>
               ) : isRunning ? (
                 <div className="logs-empty">
-                  <span className="radar-spinner" />
+                  <div className="radar-spinner-pulse" />
                   <p>Orchestrator graph is actively executing tools…</p>
                 </div>
               ) : (
                 <div className="logs-empty">
-                  <p>No query steps executed yet. Run a query in Studio to see graph logs.</p>
+                  <p>No query steps executed yet. Ask a question to see real-time graph trace.</p>
                 </div>
               )}
             </div>
@@ -87,13 +108,12 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
               {backendUp === false && (
                 <div className="error-card critical">
                   <div className="error-head">
-                    <span className="error-type">API_CONNECTION_ERROR</span>
+                    <span className="error-type">API_UNREACHABLE</span>
                     <span className="error-badge">Offline</span>
                   </div>
                   <p className="error-desc">
-                    Could not reach the SatQuery FastAPI backend on localhost:8000 or the configured API URL.
+                    Could not reach the SatQuery backend on <code>localhost:8000</code> or the configured API URL.
                   </p>
-                  <p className="error-advice">Ensure <code>python -m backend.main</code> is running if testing with live models.</p>
                 </div>
               )}
 
@@ -101,7 +121,7 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
                 errors.map((err, i) => (
                   <div key={i} className="error-card">
                     <div className="error-head">
-                      <span className="error-type">SYSTEM_ERROR</span>
+                      <span className="error-type">SYSTEM_ERROR #{i + 1}</span>
                     </div>
                     <pre className="error-desc">{typeof err === 'object' ? JSON.stringify(err, null, 2) : String(err)}</pre>
                   </div>
@@ -117,6 +137,11 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
 
           {tab === 'raw' && (
             <div className="raw-log-view">
+              <div className="raw-actions-bar">
+                <button type="button" className="btn-copy-raw" onClick={handleCopyRaw}>
+                  {copiedRaw ? '✓ Copied JSON' : '📋 Copy JSON Telemetry'}
+                </button>
+              </div>
               {rawToolResults && rawToolResults.length > 0 ? (
                 <pre className="json-code-block">{JSON.stringify(rawToolResults, null, 2)}</pre>
               ) : (
@@ -128,11 +153,12 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
           )}
         </div>
 
+        {/* Drawer Footer */}
         <div className="logs-drawer-footer">
           <span className="footer-status-txt">
-            Backend: {backendUp ? 'Online (HTTP 200)' : backendUp === false ? 'Offline' : 'Connecting'}
+            Engine: {backendUp ? 'Online' : backendUp === false ? 'Offline' : 'Connecting'}
           </span>
-          <button type="button" className="btn-glass btn-sm" onClick={onClose}>
+          <button type="button" className="btn-close-sub" onClick={onClose}>
             Close Drawer
           </button>
         </div>
