@@ -6,8 +6,10 @@
 # can't do this on their own.
 set -eu
 
+API_URL="${API_BASE_URL:-${FRONTEND_API_BASE_URL:-}}"
+
 cat <<EOF > /usr/share/nginx/html/env-config.js
 window.__SATQUERY_CONFIG__ = {
-  API_BASE_URL: "${API_BASE_URL:-}"
+  API_BASE_URL: "${API_URL}"
 };
 EOF

@@ -31,6 +31,13 @@ const QUICK_PRESETS = [
   { label: '🏔️ Terrain & 2D Slope', query: 'Derive topographical 2D slope in degrees and cross-tabulate against landcover', bbox: [14.95, 37.70, 15.05, 37.80] }
 ];
 
+function generateId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 function truncate(text, max) {
   if (!text) return '';
   return text.length > max ? `${text.slice(0, max)}…` : text;
@@ -226,7 +233,7 @@ export default function App() {
     const attachmentNote = attachmentParts.length > 0 ? attachmentParts.join('  •  ') : null;
 
     const userMessage = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: 'user',
       text,
       attachmentNote,
@@ -258,7 +265,7 @@ export default function App() {
       const errMsg = error || 'Could not reach the SatQuery API.';
       setLastErrors([errMsg]);
       assistantMessage = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         role: 'assistant',
         status: 'error',
         text: errMsg,
@@ -273,7 +280,7 @@ export default function App() {
         setLastErrors(body.errors);
       }
       assistantMessage = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         role: 'assistant',
         status: kind,
         text: body?.final_answer || body?.detail || 'The request could not be processed.',

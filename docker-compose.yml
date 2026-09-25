@@ -15,6 +15,8 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+    env_file:
+      - .env.docker
     environment:
       API_BASE_URL: ${FRONTEND_API_BASE_URL:-http://localhost:8000}
     ports:
