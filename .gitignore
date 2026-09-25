@@ -49,6 +49,7 @@ uploads/
 phase2_test_scratch/
 phase2_demonstrations/
 phase3_agent_outputs/
+sih_satellite_data/
 
 # Large GeoTIFF outputs outside test_runs
 *.tif

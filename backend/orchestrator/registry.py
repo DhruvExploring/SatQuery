@@ -802,7 +802,7 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     (TOOL_WILDFIRE, ("wildfire", "wild fire", "burn severity", "burn scar", "fire scar", "forest fire", "pre-fire", "post-fire")),
     (TOOL_FLOOD, ("flood", "inundation", "monsoon flood")),
     (TOOL_DROUGHT, ("drought", "canopy stress", "agricultural drought", "crop water stress")),
-    (TOOL_MARK_REGION, ("mark the region", "mark this region", "mark the area", "highlight the region", "highlight the area", "circle the", "draw a box around", "point out", "where exactly is", "locate the")),
+    (TOOL_MARK_REGION, ("mark the region", "mark this region", "mark the area", "highlight the region", "highlight the area", "mark the", "mark this", "mark region", "circle the", "draw a box around", "point out", "where exactly is", "locate the")),
     (TOOL_VLM, ("describe this image", "describe the image", "what do you see", "what does this look like", "interpret this imagery", "interpret this image", "visually describe")),
     (TOOL_SPATIAL, ("land cover", "landcover", "lulc", "worldcover", "terrain", "slope", "elevation", "fragmentation", "patch")),
     (TOOL_TEMPORAL, ("temporal change", "change detection", "change between", "compare dates", "before and after", "change mask", "deforestation", "vegetation loss", "vegetation gain")),
@@ -817,6 +817,13 @@ _KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
 
 def match_tool_from_query(query: str) -> tuple[str | None, str]:
     q = query.lower().strip()
+    if "\nnow:" in q:
+        q = q.split("\nnow:")[-1].strip()
+    elif "\n\nnow:" in q:
+        q = q.split("\n\nnow:")[-1].strip()
+    elif "now:" in q:
+        q = q.split("now:")[-1].strip()
+
     for tool, words in _KEYWORDS:
         for word in words:
             if word in q:
@@ -882,7 +889,8 @@ def enforce_call_tool_location(plan: Plan, state: SatQueryState) -> Plan:
         # inspect_geotiff_metadata first when an input_file is present,
         # which derives bbox/latitude/longitude (see tool_loop_graph.py's
         # tool_node) so a retry of this same tool then succeeds.
-        return {"action": "clarify", "tool": tool, "args": {}, "reason": _missing_input_reason(tool)}
+        tool_on_clarify = tool if str(TOOL_SPEC.get(tool, {}).get("location", "")).startswith("mission") else None
+        return {"action": "clarify", "tool": tool_on_clarify, "args": {}, "reason": _missing_input_reason(tool)}
     plan["args"] = trusted_args_for_tool(tool, state)
     return plan
 

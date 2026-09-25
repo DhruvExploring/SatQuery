@@ -7,6 +7,20 @@ Business logic lives in backend/orchestrator and backend/tools.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+# Sanitize PROJ environment so rasterio/GDAL/pyproj uses its own bundled PROJ database
+# rather than an incompatible system version (e.g. from PostgreSQL/PostGIS).
+try:
+    import rasterio
+    _rproj = Path(rasterio.__file__).parent / "proj_data"
+    if (_rproj / "proj.db").is_file():
+        os.environ["PROJ_LIB"] = str(_rproj)
+        os.environ["PROJ_DATA"] = str(_rproj)
+except Exception:
+    pass
+
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator

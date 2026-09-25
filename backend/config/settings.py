@@ -24,6 +24,17 @@ from dotenv import load_dotenv
 _env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env_path)
 
+# Sanitize PROJ environment so rasterio/GDAL/pyproj uses its own bundled PROJ database
+# rather than an incompatible system version (e.g. from PostgreSQL/PostGIS).
+try:
+    import rasterio
+    _rproj = Path(rasterio.__file__).parent / "proj_data"
+    if (_rproj / "proj.db").is_file():
+        os.environ["PROJ_LIB"] = str(_rproj)
+        os.environ["PROJ_DATA"] = str(_rproj)
+except Exception:
+    pass
+
 
 def _clean_str(value: str | None) -> str | None:
     if value is None:
