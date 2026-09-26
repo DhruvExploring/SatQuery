@@ -73,6 +73,26 @@ export async function runQuery(payload) {
   return { networkError: false, httpStatus: res.status, body };
 }
 
+export async function resetConversationApi({ sessionId, tempFiles = [] } = {}) {
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/conversation/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId || null,
+        temp_files: tempFiles || []
+      })
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status };
+    }
+    const data = await res.json().catch(() => ({ status: 'ok' }));
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
 /**
  * POST /api/v1/query/stream: same payload as runQuery, but the backend
  * pushes one Server-Sent Event per LangGraph node as it actually completes
@@ -83,16 +103,21 @@ export async function runQuery(payload) {
  * onStep(step) fires for each step event, in order, as it arrives.
  * Resolves with the final event's payload once the stream closes; resolves
  * with { networkError: true, error } instead if the request itself fails.
+ * Supports AbortSignal via opts.signal to immediately cancel and discard streams.
  */
-export async function runQueryStream(payload, { onStep } = {}) {
+export async function runQueryStream(payload, { onStep, signal } = {}) {
   let res;
   try {
     res = await fetch(`${API_BASE}/api/v1/query/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     });
   } catch (err) {
+    if (err?.name === 'AbortError' || signal?.aborted) {
+      return { aborted: true, networkError: false };
+    }
     return { networkError: true, error: err.message || 'Network error' };
   }
 
@@ -106,29 +131,54 @@ export async function runQueryStream(payload, { onStep } = {}) {
   let final = null;
   let streamError = null;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let boundary;
-    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
-      const rawEvent = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data: '));
-      if (!dataLine) continue;
-
-      let event;
-      try {
-        event = JSON.parse(dataLine.slice(6));
-      } catch {
-        continue;
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        try { reader.cancel(); } catch { /* ignore */ }
+        return { aborted: true, networkError: false };
       }
 
-      if (event.type === 'step') onStep?.(event.step);
-      else if (event.type === 'final') final = event;
-      else if (event.type === 'error') streamError = event.message;
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      if (signal?.aborted) {
+        return { aborted: true, networkError: false };
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      let boundary;
+      while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+        if (signal?.aborted) {
+          return { aborted: true, networkError: false };
+        }
+
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data: '));
+        if (!dataLine) continue;
+
+        let event;
+        try {
+          event = JSON.parse(dataLine.slice(6));
+        } catch {
+          continue;
+        }
+
+        if (event.type === 'step') onStep?.(event.step);
+        else if (event.type === 'final') final = event;
+        else if (event.type === 'error') streamError = event.message;
+      }
     }
+  } catch (err) {
+    if (err?.name === 'AbortError' || signal?.aborted) {
+      return { aborted: true, networkError: false };
+    }
+    return { networkError: true, error: err.message || 'Stream read error' };
+  }
+
+  if (signal?.aborted) {
+    return { aborted: true, networkError: false };
   }
 
   if (final) return { networkError: false, body: final };

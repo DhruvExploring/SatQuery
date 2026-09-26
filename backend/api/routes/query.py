@@ -18,6 +18,8 @@ from backend.api.models import (
     HealthResponse,
     QueryRequest,
     QueryResponse,
+    ResetConversationRequest,
+    ResetConversationResponse,
     resolve_data_path,
     resolve_output_dir,
 )
@@ -75,6 +77,44 @@ def _state_from_request(body: QueryRequest) -> SatQueryState:
 @router.get("/health", response_model=HealthResponse, tags=["meta"])
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+@router.post(
+    "/api/v1/conversation/reset",
+    response_model=ResetConversationResponse,
+    tags=["conversation"],
+)
+@router.post(
+    "/api/v1/reset",
+    response_model=ResetConversationResponse,
+    tags=["conversation"],
+)
+def reset_conversation(
+    body: ResetConversationRequest | None = None,
+) -> ResetConversationResponse:
+    """Reset active conversation state and remove any temporary uploaded files.
+
+    Guarantees previous conversation context is not reused. Permanent satellite
+    datasets are never deleted.
+    """
+    deleted_files = []
+    if body and body.temp_files:
+        from backend.api.routes.uploads import delete_temp_upload_file
+
+        for file_path in body.temp_files:
+            if delete_temp_upload_file(file_path):
+                deleted_files.append(file_path)
+
+    logger.info(
+        "Conversation reset complete. Session=%s, Deleted temp files=%s",
+        body.session_id if body else None,
+        deleted_files,
+    )
+    return ResetConversationResponse(
+        status="ok",
+        message="Conversation context reset.",
+        deleted_temp_files=deleted_files,
+    )
 
 
 @router.post(

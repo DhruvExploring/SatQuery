@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000",
+    "watch": "node ../scripts/dev-watcher.js",
     "build": "vite build",
     "preview": "vite preview --port 3000"
   },

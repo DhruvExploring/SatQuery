@@ -20,6 +20,7 @@ export async function inspectGeotiff(path) {
   if (!inspectResult || inspectResult.status !== 'success') return null;
 
   return {
+    rawMetadata: inspectResult,
     boundsWgs84: inspectResult.spatial?.bounds_wgs84 || null,
     info: {
       width: inspectResult.raster?.width,
@@ -27,7 +28,14 @@ export async function inspectGeotiff(path) {
       bandCount: inspectResult.raster?.band_count,
       crs: inspectResult.spatial?.crs,
       georeferenced: inspectResult.quality?.is_georeferenced,
-      pixelSizeWgs84Degrees: inspectResult.spatial?.pixel_size_wgs84_degrees || null
+      pixelSizeWgs84Degrees: inspectResult.spatial?.pixel_size_wgs84_degrees || null,
+      boundsWgs84: inspectResult.spatial?.bounds_wgs84 || null,
+      approxAreaKm2: inspectResult.spatial?.approx_area_km2 || null,
+      cornersWgs84: inspectResult.spatial?.corners_wgs84 || null,
+      resolution: inspectResult.spatial?.resolution || null,
+      driver: inspectResult.file?.driver || null,
+      fileSizeBytes: inspectResult.file?.file_size_bytes || null,
+      compression: inspectResult.raster?.compression || null
     }
   };
 }

@@ -467,3 +467,23 @@ class QueryResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = "ok"
+
+
+class ResetConversationRequest(BaseModel):
+    session_id: str | None = Field(
+        default=None,
+        description="Optional session or thread identifier to reset.",
+    )
+    temp_files: list[str] = Field(
+        default_factory=list,
+        description="List of temporary uploaded file paths to clean up from disk.",
+    )
+
+
+class ResetConversationResponse(BaseModel):
+    status: str = "ok"
+    message: str = "Conversation context reset."
+    deleted_temp_files: list[str] = Field(
+        default_factory=list,
+        description="Temporary upload files successfully removed from disk.",
+    )

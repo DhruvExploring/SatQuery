@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { rasterPreviewUrl, uploadRasterFile } from '../api/rasters';
-import { formatBbox, roiBoxToBbox } from '../lib/geo';
+import { computeApproxAreaKm2, formatBbox, formatLat, formatLon, roiBoxToBbox } from '../lib/geo';
 import { inspectGeotiff } from '../lib/inspectGeotiff';
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
@@ -25,6 +25,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
   const [dragStart, setDragStart] = useState(null);
   const [dragCurrent, setDragCurrent] = useState(null);
   const [imgFailed, setImgFailed] = useState(false);
+  const [copiedBbox, setCopiedBbox] = useState(false);
 
   useEffect(() => {
     setImgFailed(false);
@@ -126,7 +127,19 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
       }
     : slot.roi;
 
-  const roiBbox = slot.roi && slot.boundsWgs84 ? roiBoxToBbox(slot.roi, slot.boundsWgs84) : null;
+  const bounds = slot.boundsWgs84 || slot.info?.boundsWgs84 || null;
+  const roiBbox = slot.roi && bounds ? roiBoxToBbox(slot.roi, bounds) : null;
+  const approxArea = slot.info?.approxAreaKm2 || computeApproxAreaKm2(bounds);
+  const centerLat = bounds ? (bounds.min_lat + bounds.max_lat) / 2 : null;
+  const centerLon = bounds ? (bounds.min_lon + bounds.max_lon) / 2 : null;
+
+  const copyBbox = () => {
+    if (!bounds) return;
+    const bboxStr = `[${bounds.min_lon.toFixed(4)}, ${bounds.min_lat.toFixed(4)}, ${bounds.max_lon.toFixed(4)}, ${bounds.max_lat.toFixed(4)}]`;
+    navigator.clipboard?.writeText(bboxStr);
+    setCopiedBbox(true);
+    setTimeout(() => setCopiedBbox(false), 2000);
+  };
 
   return (
     <div className="sat-visualizer-slot">
@@ -159,12 +172,16 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
           {slot.uploadedPath && (
             <button
               type="button"
-              className="slot-action-btn btn-danger-soft"
+              className="slot-action-btn btn-danger-soft btn-remove-tiff"
               onClick={clearSlot}
               disabled={disabled}
-              title="Remove this satellite scene"
+              title="Remove currently loaded TIFF"
+              id="btn-remove-tiff"
             >
-              <span>Clear</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M18 6L6 18M6 6l12 12" />
+              </svg>
+              <span>Remove TIFF</span>
             </button>
           )}
         </div>
@@ -265,77 +282,168 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
             {/* Hint overlay */}
             <div className="sat-canvas-hint">Drag a box on the image to focus your query</div>
           </div>
+        </div>
+      )}
 
-          {/* ROI status pills */}
-          {slot.roi && (
-            <div className="sat-roi-chip-bar">
-              <span className="roi-active-label">
-                🎯 {roiBbox ? `Region: ${formatBbox(roiBbox)}` : 'Custom Region Marked'}
+      {/* 1. User Marked ROI Status Readout */}
+      {slot.uploadedPath && slot.roi && (
+        <div className="sat-roi-chip-bar">
+          <div className="roi-details-wrap">
+            <span className="roi-active-label">
+              🎯 <strong>Focused ROI:</strong> {roiBbox ? formatBbox(roiBbox) : 'Custom Region Marked'}
+            </span>
+            {roiBbox && (
+              <span className="roi-center-sub">
+                (Center: {formatLat((roiBbox.min_lat + roiBbox.max_lat) / 2)}, {formatLon((roiBbox.min_lon + roiBbox.max_lon) / 2)})
               </span>
-              <button
-                type="button"
-                className="btn-roi-clear"
-                onClick={() => onChange({ roi: null })}
-                disabled={disabled}
-              >
-                Clear Region
-              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            className="btn-roi-clear"
+            onClick={() => onChange({ roi: null })}
+            disabled={disabled}
+          >
+            Clear Region
+          </button>
+        </div>
+      )}
+
+      {/* 2. AI Identified Region Overlay */}
+      {slot.uploadedPath && (slot.modelPolygon || slot.modelBbox) && (
+        <div className="sat-roi-chip-bar ai-detected">
+          <span className="roi-active-label">
+            ✨ AI identified region from analysis
+          </span>
+          <button
+            type="button"
+            className="btn-roi-clear"
+            onClick={() => onChange({ modelBbox: null, modelPolygon: null })}
+            disabled={disabled}
+          >
+            Clear AI Overlay
+          </button>
+        </div>
+      )}
+
+      {/* 3. Comprehensive GeoTIFF Spatial & Raster Metadata Panel */}
+      {slot.uploadedPath && (bounds || slot.info) && (
+        <div className="sat-image-metadata-card">
+          <div className="metadata-card-header">
+            <div className="meta-header-title">
+              <span className="meta-icon">🛰️</span>
+              <span>SCENE SPATIAL METADATA</span>
             </div>
-          )}
-
-          {/* AI Marked Region Clear Bar */}
-          {(slot.modelPolygon || slot.modelBbox) && (
-            <div className="sat-roi-chip-bar ai-detected">
-              <span className="roi-active-label">
-                ✨ AI identified region from analysis
+            <div className="meta-header-badges">
+              <span className={`meta-geo-badge ${slot.info?.georeferenced !== false ? 'geo-ok' : 'geo-none'}`}>
+                {slot.info?.georeferenced !== false ? '✓ Georeferenced' : '⚠️ Unreferenced'}
               </span>
-              <button
-                type="button"
-                className="btn-roi-clear"
-                onClick={() => onChange({ modelBbox: null, modelPolygon: null })}
-                disabled={disabled}
-              >
-                Clear AI Overlay
-              </button>
-            </div>
-          )}
-
-          {/* Compact TIFF Metadata Strip Placed Near Image */}
-          {slot.info && (
-            <div className="compact-tiff-bar">
-              <span className="tiff-chip" title="Dimensions">
-                <span className="chip-icon">📐</span>
-                <span>{slot.info.width} × {slot.info.height}</span>
-              </span>
-              <span className="tiff-chip" title="Bands">
-                <span className="chip-icon">📊</span>
-                <span>{slot.info.bandCount} band{slot.info.bandCount > 1 ? 's' : ''}</span>
-              </span>
-              {slot.info.crs && (
-                <span className="tiff-chip" title="CRS">
-                  <span className="chip-icon">🌐</span>
-                  <span>{slot.info.crs}</span>
-                </span>
-              )}
-              <span className="tiff-chip" title="Georeference">
-                <span className="chip-icon">🛰️</span>
-                <span>{slot.info.georeferenced ? 'Georeferenced' : 'Unreferenced'}</span>
-              </span>
-              {slot.info.pixelSizeWgs84Degrees && (
-                <span className="tiff-chip" title="Ground Sampling Distance / Pixel size">
-                  <span className="chip-icon">🎯</span>
-                  <span>{slot.info.pixelSizeWgs84Degrees.lon_per_pixel.toExponential(2)}°/px</span>
-                </span>
+              {slot.info?.crs && (
+                <span className="meta-crs-badge">{slot.info.crs}</span>
               )}
             </div>
-          )}
+          </div>
 
-          {slot.inspecting && (
-            <div className="compact-tiff-bar inspecting">
-              <span className="radar-mini-pulse" />
-              <span>Inspecting GeoTIFF metadata…</span>
-            </div>
-          )}
+          <div className="sat-metadata-grid">
+            {/* Latitude Range & Center */}
+            {bounds && (
+              <div className="meta-data-cell highlight-coord">
+                <span className="cell-label">Latitude (Lat)</span>
+                <span className="cell-val">
+                  {formatLat(bounds.min_lat)} to {formatLat(bounds.max_lat)}
+                </span>
+                {centerLat != null && (
+                  <span className="cell-subval">Center: {formatLat(centerLat)}</span>
+                )}
+              </div>
+            )}
+
+            {/* Longitude Range & Center */}
+            {bounds && (
+              <div className="meta-data-cell highlight-coord">
+                <span className="cell-label">Longitude (Lon)</span>
+                <span className="cell-val">
+                  {formatLon(bounds.min_lon)} to {formatLon(bounds.max_lon)}
+                </span>
+                {centerLon != null && (
+                  <span className="cell-subval">Center: {formatLon(centerLon)}</span>
+                )}
+              </div>
+            )}
+
+            {/* Bounding Box Array with Copy Action */}
+            {bounds && (
+              <div className="meta-data-cell cell-bbox">
+                <div className="bbox-cell-head">
+                  <span className="cell-label">Bounding Box (BBox)</span>
+                  <button
+                    type="button"
+                    className="btn-copy-bbox"
+                    onClick={copyBbox}
+                    title="Copy bounding box array to clipboard"
+                  >
+                    {copiedBbox ? '✓ Copied' : '📋 Copy'}
+                  </button>
+                </div>
+                <code className="cell-code">
+                  [{bounds.min_lon.toFixed(4)}, {bounds.min_lat.toFixed(4)}, {bounds.max_lon.toFixed(4)}, {bounds.max_lat.toFixed(4)}]
+                </code>
+              </div>
+            )}
+
+            {/* Dimensions */}
+            {slot.info?.width && (
+              <div className="meta-data-cell">
+                <span className="cell-label">Dimensions</span>
+                <span className="cell-val">{slot.info.width} × {slot.info.height} px</span>
+              </div>
+            )}
+
+            {/* Bands */}
+            {slot.info?.bandCount && (
+              <div className="meta-data-cell">
+                <span className="cell-label">Bands</span>
+                <span className="cell-val">{slot.info.bandCount} band{slot.info.bandCount > 1 ? 's' : ''}</span>
+              </div>
+            )}
+
+            {/* Approx Area */}
+            {approxArea && (
+              <div className="meta-data-cell">
+                <span className="cell-label">Coverage Area</span>
+                <span className="cell-val">{approxArea} km²</span>
+              </div>
+            )}
+
+            {/* Ground Sampling Distance / Pixel Size */}
+            {slot.info?.pixelSizeWgs84Degrees && (
+              <div className="meta-data-cell">
+                <span className="cell-label">Resolution (GSD)</span>
+                <span className="cell-val">
+                  {slot.info.pixelSizeWgs84Degrees.lon_per_pixel.toExponential(2)}°/px
+                </span>
+              </div>
+            )}
+
+            {/* Format & Size */}
+            {(slot.info?.driver || slot.info?.fileSizeBytes) && (
+              <div className="meta-data-cell">
+                <span className="cell-label">Format & Size</span>
+                <span className="cell-val">
+                  {slot.info.driver || 'GTiff'}
+                  {slot.info.fileSizeBytes ? ` · ${(slot.info.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB` : ''}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 4. Background Ingestion & Inspection Banner */}
+      {slot.inspecting && (
+        <div className="sat-inspecting-banner">
+          <span className="radar-mini-pulse" />
+          <span>Inspecting GeoTIFF metadata & extracting coordinates…</span>
         </div>
       )}
 

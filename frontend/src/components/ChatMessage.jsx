@@ -159,18 +159,16 @@ export default function ChatMessage({ message, onOpenRaster }) {
   };
 
   if (message.role === 'user') {
+    // Strip any filenames or file tags that may have been concatenated
+    const cleanText = (message.text || '')
+      .replace(/\s*\|\s*(T[12]|File):.*$/i, '')
+      .replace(/\n*Active:\s*.*$/i, '')
+      .trim();
+
     return (
       <div className="chat-msg-row chat-user-row">
         <div className="chat-bubble user-bubble">
-          <div className="user-bubble-content">
-            <p className="user-query-text">{message.text}</p>
-            {message.attachmentNote && (
-              <div className="user-attach-pill">
-                <span className="attach-symbol">📎</span>
-                <span>{message.attachmentNote}</span>
-              </div>
-            )}
-          </div>
+          <p className="user-query-text">{cleanText || message.text}</p>
         </div>
       </div>
     );

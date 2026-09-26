@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 # pyrefly: ignore [missing-import]
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 
 from backend.orchestrator.ingest_graph import run_ingest
 
@@ -22,6 +22,43 @@ _UPLOAD_DIR = _PROJECT_ROOT / "uploads"
 _ALLOWED_SUFFIXES = {".tif", ".tiff"}
 _MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB — generous for a GeoTIFF, bounds abuse
 _CHUNK_SIZE = 1024 * 1024
+
+
+def resolve_temp_upload_path(raw_path: str) -> Path | None:
+    """Validate that the path is strictly inside _UPLOAD_DIR and not escaping it.
+
+    Protects permanent satellite datasets by only allowing files within the
+    temporary uploads directory.
+    """
+    if not raw_path or not raw_path.strip():
+        return None
+    try:
+        p = Path(raw_path)
+        candidate = (_PROJECT_ROOT / p).resolve() if not p.is_absolute() else p.resolve()
+        upload_dir_resolved = _UPLOAD_DIR.resolve()
+        if candidate.is_relative_to(upload_dir_resolved) and candidate != upload_dir_resolved:
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def delete_temp_upload_file(raw_path: str) -> bool:
+    """Delete a temporary uploaded file and its .kb.json sibling if it exists.
+
+    Never touches permanent satellite datasets.
+    """
+    candidate = resolve_temp_upload_path(raw_path)
+    if not candidate:
+        return False
+    deleted = False
+    if candidate.is_file():
+        candidate.unlink(missing_ok=True)
+        deleted = True
+    kb_path = candidate.with_suffix(".kb.json")
+    if kb_path.is_file():
+        kb_path.unlink(missing_ok=True)
+    return deleted
 
 
 @router.post("/api/v1/upload-raster", tags=["uploads"])
@@ -65,3 +102,21 @@ async def upload_raster(file: UploadFile) -> dict:
         "size_bytes": size,
         "knowledge_base": ingest_result["knowledge_base"],
     }
+
+
+@router.delete("/api/v1/upload-raster", tags=["uploads"])
+async def delete_upload_raster(
+    path: str = Query(..., description="Path of temporary uploaded raster to delete"),
+) -> dict:
+    """Delete a user-supplied temporary raster and its associated knowledge base.
+
+    Rejects any request targeting permanent satellite datasets outside uploads/.
+    """
+    candidate = resolve_temp_upload_path(path)
+    if not candidate:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Only temporary files in the uploads directory can be deleted.",
+        )
+    deleted = delete_temp_upload_file(path)
+    return {"ok": True, "path": path, "deleted": deleted}

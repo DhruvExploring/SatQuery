@@ -29,3 +29,30 @@ export function formatBbox(bbox) {
   const { min_lon, min_lat, max_lon, max_lat } = bbox;
   return `${min_lon.toFixed(4)}–${max_lon.toFixed(4)}°E, ${min_lat.toFixed(4)}–${max_lat.toFixed(4)}°N`;
 }
+
+export function formatLat(lat) {
+  if (lat == null || Number.isNaN(Number(lat))) return '';
+  const n = Number(lat);
+  return `${Math.abs(n).toFixed(4)}°${n >= 0 ? 'N' : 'S'}`;
+}
+
+export function formatLon(lon) {
+  if (lon == null || Number.isNaN(Number(lon))) return '';
+  const n = Number(lon);
+  return `${Math.abs(n).toFixed(4)}°${n >= 0 ? 'E' : 'W'}`;
+}
+
+export function computeApproxAreaKm2(bounds) {
+  if (!bounds || bounds.min_lat == null || bounds.max_lat == null || bounds.min_lon == null || bounds.max_lon == null) {
+    return null;
+  }
+  const latMid = (bounds.min_lat + bounds.max_lat) / 2.0;
+  const latRad = (latMid * Math.PI) / 180.0;
+  const degToMLat = 111132.954 - 559.822 * Math.cos(2 * latRad) + 1.175 * Math.cos(4 * latRad);
+  const degToMLon = 111412.84 * Math.cos(latRad) - 93.5 * Math.cos(3 * latRad);
+  const widthM = Math.abs(bounds.max_lon - bounds.min_lon) * degToMLon;
+  const heightM = Math.abs(bounds.max_lat - bounds.min_lat) * degToMLat;
+  const km2 = (widthM * heightM) / 1e6;
+  return km2 < 0.01 ? '<0.01' : km2.toFixed(2);
+}
+

@@ -1,15 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { checkHealth, fetchModelsStatus, runQueryStream } from './api/satqueryApi';
+import { checkHealth, fetchModelsStatus, resetConversationApi, runQueryStream } from './api/satqueryApi';
+import { deleteUploadedRaster } from './api/rasters';
 import ChatMessage from './components/ChatMessage';
-import DualRasterSlider from './components/DualRasterSlider';
+import DetailedLogsSidebar from './components/DetailedLogsSidebar';
 import ImageSlot from './components/ImageSlot';
-import LiveLogsPanel from './components/LiveLogsPanel';
 import RasterModal from './components/RasterModal';
 import SpectralInspector from './components/SpectralInspector';
+import TemporalComparisonViewer from './components/TemporalComparisonViewer';
 import WorkflowPresets from './components/WorkflowPresets';
+import WorkflowTimelinePanel from './components/WorkflowTimelinePanel';
 import { roiBoxToBbox } from './lib/geo';
 import { inspectGeotiff } from './lib/inspectGeotiff';
-import { loadSession, saveSession } from './lib/storage';
+import { clearSession, loadSession, saveSession } from './lib/storage';
 
 const RECAP_PAIR_LIMIT = 2;
 const RECAP_ANSWER_CHARS = 320;
@@ -21,14 +23,6 @@ const FETCH_IMAGERY_TOOLS = new Set([
   'fetch_sar_imagery',
   'fetch_sar'
 ]);
-
-const QUICK_PRESETS = [
-  { label: '🌿 Crop Canopy & NDVI', query: 'Compute NDVI vegetation canopy vigor and assess biomass density' },
-  { label: '🌊 Flood Inundation (SAR)', query: 'Detect flood surface water inundation using cloud-penetrating Sentinel-1 SAR backscatter' },
-  { label: '🌲 Amazon Deforestation', query: 'Analyze tropical forest loss between T1 and T2 and generate change mask' },
-  { label: '🔥 Wildfire Severity (dNBR)', query: 'Calculate normalized burn ratio (NBR) and delta NBR to map wildfire burn severity' },
-  { label: '🏔️ Terrain & 2D Slope', query: 'Derive topographical 2D slope in degrees and cross-tabulate against landcover' }
-];
 
 function generateId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -128,6 +122,7 @@ export default function App() {
   const saved = loadSession();
 
   const [mode, setMode] = useState(saved?.mode || 'single'); // 'single' | 'pair'
+  const [isMobileViewerCollapsed, setIsMobileViewerCollapsed] = useState(false);
   const [slotA, setSlotA] = useState(saved?.slotA || emptySlot());
   const [slotB, setSlotB] = useState(saved?.slotB || emptySlot());
   const [messages, setMessages] = useState(saved?.messages || []);
@@ -137,16 +132,18 @@ export default function App() {
   const [backendUp, setBackendUp] = useState(null);
   const [modelsStatus, setModelsStatus] = useState(null);
 
-  // Modals & Collapsible Drawer
-  const [isLogsOpen, setIsLogsOpen] = useState(false);
+  // Modals & Popups
   const [isWorkflowsOpen, setIsWorkflowsOpen] = useState(false);
   const [isSpectralOpen, setIsSpectralOpen] = useState(false);
   const [modalRaster, setModalRaster] = useState(null);
-  const [showSlider, setShowSlider] = useState(false);
+  const [isDetailsSidebarOpen, setIsDetailsSidebarOpen] = useState(false);
+  const [sidebarInitialTab, setSidebarInitialTab] = useState('logs');
   const [lastErrors, setLastErrors] = useState([]);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const queryIdRef = useRef(0);
 
   useEffect(() => {
     let mounted = true;
@@ -169,34 +166,91 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isRunning]);
 
-  // Esc key closes modals / drawer
+  // Esc key closes modals
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        setIsLogsOpen(false);
         setIsWorkflowsOpen(false);
         setIsSpectralOpen(false);
         setModalRaster(null);
+        setIsDetailsSidebarOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleResetConversation = () => {
+  const handleRemoveSlot = (slotKey) => {
+    const targetSlot = slotKey === 'A' ? slotA : slotB;
+    const path = targetSlot?.uploadedPath;
+    if (path && typeof path === 'string' && path.startsWith('uploads/')) {
+      deleteUploadedRaster(path).catch((err) => {
+        console.warn('Could not delete temporary raster on server:', err);
+      });
+    }
+    if (slotKey === 'A') {
+      setSlotA(emptySlot());
+    } else {
+      setSlotB(emptySlot());
+    }
+  };
+
+  const handleNewConversation = async () => {
+    // 1. Cancel in-flight query and increment query ID so late responses are discarded
+    queryIdRef.current += 1;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // 2. Identify active temporary uploaded files
+    const tempFiles = [slotA?.uploadedPath, slotB?.uploadedPath].filter(
+      (p) => typeof p === 'string' && p.startsWith('uploads/')
+    );
+
+    // 3. Reset all conversation, TIFF, metadata, results, and telemetry states
     setMessages([]);
     setLiveSteps([]);
     setLastErrors([]);
+    setInput('');
+    setIsRunning(false);
+    setSlotA(emptySlot());
+    setSlotB(emptySlot());
+    setMode('single');
+    setModalRaster(null);
+    setIsWorkflowsOpen(false);
+    setIsSpectralOpen(false);
+    setIsDetailsSidebarOpen(false);
+
+    // 4. Clear temporary persisted storage
+    clearSession();
+
+    // 5. Synchronize reset with backend
+    try {
+      await resetConversationApi({ tempFiles });
+    } catch (err) {
+      console.warn('Backend reset notification failed:', err);
+    }
   };
 
   const handleModeChange = (newMode) => {
     if (newMode === mode) return;
+    queryIdRef.current += 1;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    const tempFiles = [slotA?.uploadedPath, slotB?.uploadedPath].filter(
+      (p) => typeof p === 'string' && p.startsWith('uploads/')
+    );
+    tempFiles.forEach((p) => deleteUploadedRaster(p).catch(() => {}));
+
     setMode(newMode);
     setSlotA(emptySlot());
     setSlotB(emptySlot());
     setMessages([]);
     setLiveSteps([]);
-    setShowSlider(false);
+    setIsRunning(false);
   };
 
   const handleSelectWorkflow = (wf) => {
@@ -219,21 +273,17 @@ export default function App() {
     const text = input.trim();
     if (!text || isRunning) return;
 
-    const attachmentParts = [];
-    if (mode === 'single') {
-      if (slotA.uploadedPath) attachmentParts.push(`File: ${slotA.originalFilename}`);
-    } else {
-      if (slotA.uploadedPath) attachmentParts.push(`T1: ${slotA.originalFilename}`);
-      if (slotB.uploadedPath) attachmentParts.push(`T2: ${slotB.originalFilename}`);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
-
-    const attachmentNote = attachmentParts.length > 0 ? attachmentParts.join('  •  ') : null;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const currentQueryId = ++queryIdRef.current;
 
     const userMessage = {
       id: generateId(),
       role: 'user',
       text,
-      attachmentNote,
       timestamp: Date.now()
     };
 
@@ -254,9 +304,19 @@ export default function App() {
       ...buildFilePayload(mode, slotA, slotB)
     };
 
-    const { networkError, error, body } = await runQueryStream(payload, {
-      onStep: (step) => setLiveSteps((prev) => [...prev, step])
+    const { networkError, error, body, aborted } = await runQueryStream(payload, {
+      signal: controller.signal,
+      onStep: (step) => {
+        if (queryIdRef.current === currentQueryId && !controller.signal.aborted) {
+          setLiveSteps((prev) => [...prev, step]);
+        }
+      }
     });
+
+    // Guard: If conversation was reset or aborted, ignore old responses completely
+    if (queryIdRef.current !== currentQueryId || aborted || controller.signal.aborted) {
+      return;
+    }
 
     let assistantMessage;
     if (networkError) {
@@ -291,7 +351,7 @@ export default function App() {
     setMessages((m) => [...m, assistantMessage]);
     setIsRunning(false);
 
-    if (!networkError) {
+    if (!networkError && queryIdRef.current === currentQueryId) {
       const queriedImagePath = payload.input_file;
       const activeSlot =
         queriedImagePath && queriedImagePath === slotA.uploadedPath
@@ -342,7 +402,7 @@ export default function App() {
               <span className="dot-inner" />
             </div>
             <div>
-              <h1 className="vpro-title">SatQuery Vision</h1>
+              <h1 className="vpro-title">SatQuery AI</h1>
               <span className="vpro-subtitle">Earth Observation & Spatial Intelligence</span>
             </div>
           </div>
@@ -385,78 +445,66 @@ export default function App() {
               <span className="tool-icon">🔬</span>
               <span>Spectral Lab</span>
             </button>
-
-            {/* Live Logs / Telemetry Drawer Toggle */}
-            <button
-              type="button"
-              className={`pill-tool-btn logs-toggle-btn ${totalErrorCount > 0 ? 'has-errors' : ''} ${isLogsOpen ? 'active' : ''}`}
-              onClick={() => setIsLogsOpen((prev) => !prev)}
-              title="Toggle live workflow flow, graph execution steps, and diagnostics"
-            >
-              <span className="tool-icon">📋</span>
-              <span>Live Logs</span>
-              {latestTrace.length > 0 && <span className="pill-step-count">{latestTrace.length}</span>}
-              {totalErrorCount > 0 && <span className="pill-error-tag">{totalErrorCount}</span>}
-              {isRunning && <span className="pill-running-pulse" />}
-            </button>
           </div>
 
           <div className="vpro-header-right">
+            <button
+              type="button"
+              className="btn-new-convo"
+              onClick={handleNewConversation}
+              title="Start a new conversation and reset workspace"
+              id="btn-new-conversation"
+            >
+              <span className="plus-icon">＋</span>
+              <span>New Conversation</span>
+            </button>
+
             <div className={`connection-status ${backendUp ? 'online' : backendUp === false ? 'offline' : 'pending'}`}>
               <span className="status-indicator" />
               <span>{backendUp ? 'Ready' : backendUp === false ? 'Offline' : 'Connecting'}</span>
             </div>
-
-            {messages.length > 0 && (
-              <button
-                type="button"
-                className="btn-icon-soft"
-                onClick={handleResetConversation}
-                title="Clear conversation"
-              >
-                ↺
-              </button>
-            )}
           </div>
         </header>
 
-        {/* Quick Presets Strip */}
-        <div className="vpro-presets-strip">
-          <span className="presets-label">Quick Scenarios:</span>
-          <div className="presets-scroll">
-            {QUICK_PRESETS.map((p, idx) => (
-              <button
-                key={idx}
-                type="button"
-                className="preset-pill-item"
-                onClick={() => {
-                  setInput(p.query);
-                  inputRef.current?.focus();
-                }}
-                disabled={isRunning}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Main Two-Column Viewport: Left = Satellite Visualizer (Large Focus), Right = AI Chat */}
+        {/* Main Workstation Viewport: Responsive 2-Pane Architecture (Desktop = Side-by-Side, Mobile = Stacked Split) */}
         <div className="vpro-main-grid">
-          {/* Left Column: Satellite Visualizer (Primary Focus, Displayed Large) */}
-          <div className="vpro-column-left">
+          {/* Left / Top Column: Satellite Visualizer (Always visible in mobile view) */}
+          <div className={`vpro-column-left ${isMobileViewerCollapsed ? 'mobile-collapsed' : ''}`}>
             <div className="vpro-card imagery-workspace-card">
               <div className="card-top-row">
-                <h3>Satellite Scene Assets</h3>
-                {mode === 'pair' && slotA.uploadedPath && slotB.uploadedPath && (
+                <div className="card-top-title-group">
+                  <h3>Satellite Scene Assets</h3>
+                  {slotA.uploadedPath && (
+                    <span className="mobile-active-fn-badge" title={slotA.originalFilename}>
+                      {slotA.originalFilename}
+                    </span>
+                  )}
+                </div>
+
+                <div className="card-top-actions">
+                  {(slotA.uploadedPath || slotB.uploadedPath) && (
+                    <button
+                      type="button"
+                      className="btn-pill-action"
+                      onClick={() => {
+                        setSidebarInitialTab('tiff-json');
+                        setIsDetailsSidebarOpen(true);
+                      }}
+                      title="Inspect GeoTIFF Metadata & JSON Profile"
+                    >
+                      <span>{'{ }'} GeoTIFF JSON</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    className={`btn-pill-action ${showSlider ? 'active' : ''}`}
-                    onClick={() => setShowSlider((prev) => !prev)}
+                    className="btn-collapse-viewer"
+                    onClick={() => setIsMobileViewerCollapsed((prev) => !prev)}
+                    title={isMobileViewerCollapsed ? 'Expand Satellite Scene' : 'Collapse Satellite Scene'}
+                    aria-expanded={!isMobileViewerCollapsed}
                   >
-                    {showSlider ? 'Show Grid' : '⇄ Compare Swipe'}
+                    <span>{isMobileViewerCollapsed ? '▼ Show Image' : '▲ Hide Image'}</span>
                   </button>
-                )}
+                </div>
               </div>
 
               <div className="visualizer-content-stage">
@@ -465,66 +513,39 @@ export default function App() {
                     label="Target Satellite Scene (.tif/.tiff)"
                     slot={slotA}
                     onChange={(patch) => setSlotA((prev) => ({ ...prev, ...patch }))}
-                    onReset={() => setSlotA(emptySlot())}
+                    onReset={() => handleRemoveSlot('A')}
                     disabled={isRunning}
                     onOpenModal={setModalRaster}
                   />
-                ) : showSlider && slotA.uploadedPath && slotB.uploadedPath ? (
-                  <DualRasterSlider slotA={slotA} slotB={slotB} />
                 ) : (
-                  <div className="pair-grid-viewport">
-                    <ImageSlot
-                      label="Image A (T1 Reference)"
-                      slot={slotA}
-                      onChange={(patch) => setSlotA((prev) => ({ ...prev, ...patch }))}
-                      onReset={() => setSlotA(emptySlot())}
-                      disabled={isRunning}
-                      onOpenModal={setModalRaster}
-                    />
-                    <ImageSlot
-                      label="Image B (T2 Comparison)"
-                      slot={slotB}
-                      onChange={(patch) => setSlotB((prev) => ({ ...prev, ...patch }))}
-                      onReset={() => setSlotB(emptySlot())}
-                      disabled={isRunning}
-                      onOpenModal={setModalRaster}
-                    />
-                  </div>
+                  <TemporalComparisonViewer
+                    slotA={slotA}
+                    slotB={slotB}
+                    onChangeA={(patch) => setSlotA((prev) => ({ ...prev, ...patch }))}
+                    onChangeB={(patch) => setSlotB((prev) => ({ ...prev, ...patch }))}
+                    onRemoveA={() => handleRemoveSlot('A')}
+                    onRemoveB={() => handleRemoveSlot('B')}
+                    onOpenModal={setModalRaster}
+                    disabled={isRunning}
+                  />
                 )}
               </div>
             </div>
           </div>
 
-          {/* Right Column: AI Chat & Reasoning Stream */}
+          {/* Right / Bottom Column: AI Chat & Reasoning Stream */}
           <div className="vpro-column-right">
             <div className="vpro-card chat-workspace-card">
               <div className="chat-messages-container">
                 {messages.length === 0 ? (
-                  <div className="chat-welcome-state">
-                    <div className="welcome-glow-circle">
-                      <span className="welcome-sat-icon">🛰️</span>
+                  <div className="chat-empty-ready">
+                    <div className="ready-indicator-badge">
+                      <span className="ready-beacon-pulse" />
+                      <span className="ready-label">WORKSTATION READY</span>
                     </div>
-                    <h2>Autonomous Earth Observation</h2>
-                    <p>
-                      Query Sentinel-1 SAR radar, Sentinel-2 optical imagery, 13+ spectral vegetation indices,
-                      or landscape terrain slope profiles with autonomous agent toolchains.
+                    <p className="ready-subtext">
+                      Upload a satellite GeoTIFF (.tif/.tiff) or type an Earth Observation query below to deploy autonomous multi-sensor tools.
                     </p>
-                    <div className="welcome-suggestions">
-                      <button
-                        type="button"
-                        className="welcome-chip"
-                        onClick={() => setIsWorkflowsOpen(true)}
-                      >
-                        ⚡ Explore Workflows
-                      </button>
-                      <button
-                        type="button"
-                        className="welcome-chip"
-                        onClick={() => setIsSpectralOpen(true)}
-                      >
-                        🔬 Spectral Lab
-                      </button>
-                    </div>
                   </div>
                 ) : (
                   messages.map((m) => (
@@ -540,14 +561,27 @@ export default function App() {
                         <span className="dot" />
                         <span className="dot" />
                       </div>
-                      <span className="eval-text">Orchestrating remote-sensing tools (check live flow →)</span>
+                      <span className="eval-text">Orchestrating remote-sensing tools…</span>
                     </div>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Bottom Command Pill Form - Fixed at Bottom */}
+              {/* Compact Professional Workflow Timeline & Execution Events */}
+              <WorkflowTimelinePanel
+                executionTrace={latestTrace}
+                toolResults={latestToolResults}
+                isRunning={isRunning}
+                errors={lastErrors}
+                backendUp={backendUp}
+                onOpenDetails={() => {
+                  setSidebarInitialTab('logs');
+                  setIsDetailsSidebarOpen(true);
+                }}
+              />
+
+              {/* Bottom Command Form - Fixed at Bottom */}
               <form className="vpro-command-dock" onSubmit={handleSubmit}>
                 <div className="vpro-input-pill">
                   <textarea
@@ -591,30 +625,6 @@ export default function App() {
         </div>
       </div>
 
-      {/* Collapsible Telemetry & Live Logs Slide-Over Drawer */}
-      {isLogsOpen && (
-        <div className="live-logs-drawer-backdrop" onClick={() => setIsLogsOpen(false)}>
-          <div className="live-logs-drawer-sheet" onClick={(e) => e.stopPropagation()}>
-            <LiveLogsPanel
-              isOpen={true}
-              onClose={() => setIsLogsOpen(false)}
-              executionTrace={latestTrace}
-              toolResults={latestToolResults}
-              isRunning={isRunning}
-              errors={lastErrors}
-              backendUp={backendUp}
-              modelsStatus={modelsStatus}
-              context={{
-                mode,
-                slotA,
-                slotB,
-                queryText: input
-              }}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Workflows Modal */}
       {isWorkflowsOpen && (
         <div className="vpro-modal-backdrop" onClick={() => setIsWorkflowsOpen(false)}>
@@ -653,6 +663,20 @@ export default function App() {
       {modalRaster && (
         <RasterModal raster={modalRaster} onClose={() => setModalRaster(null)} />
       )}
+
+      {/* Detailed System Telemetry & GeoTIFF Inspector Sidebar Drawer */}
+      <DetailedLogsSidebar
+        isOpen={isDetailsSidebarOpen}
+        onClose={() => setIsDetailsSidebarOpen(false)}
+        executionTrace={latestTrace}
+        toolResults={latestToolResults}
+        isRunning={isRunning}
+        errors={lastErrors}
+        slotA={slotA}
+        slotB={slotB}
+        mode={mode}
+        initialTab={sidebarInitialTab}
+      />
     </div>
   );
 }

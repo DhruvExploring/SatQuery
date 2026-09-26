@@ -47,6 +47,33 @@ export async function uploadRasterFile(file) {
 }
 
 /**
+ * DELETE /api/v1/upload-raster with a relative upload path (e.g. "uploads/xxx.tif").
+ * Cleans up temporary raster from disk. Returns { ok: true, deleted: bool } or { ok: false, error }.
+ */
+export async function deleteUploadedRaster(filePath) {
+  if (!filePath) return { ok: false, error: 'No file path provided.' };
+  try {
+    const params = new URLSearchParams({ path: filePath });
+    const res = await fetch(`${API_BASE}/api/v1/upload-raster?${params.toString()}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      let body = null;
+      try {
+        body = await res.json();
+      } catch {
+        body = null;
+      }
+      return { ok: false, error: body?.detail || `Delete failed (HTTP ${res.status})` };
+    }
+    const data = await res.json().catch(() => ({ ok: true }));
+    return { ok: true, ...data };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Network error' };
+  }
+}
+
+/**
  * Find GeoTIFF/raster paths inside a tool_results array, for showing output
  * previews. Requires an actual path separator so bare-filename fields (e.g.
  * inspect_geotiff_metadata's "file_name") don't get treated as a usable path
