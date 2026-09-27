@@ -2951,10 +2951,40 @@ html, body {
   box-shadow: 0 6px 16px -3px rgba(238, 138, 88, 0.25);
 }
 
-.wf-card-header {
+.wf-card-header, .workflow-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.2rem;
+}
+
+.workflow-tag-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.workflow-tag {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  color: #475569;
+  font-weight: 600;
+}
+
+.workflow-mode-pill {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 0.12rem 0.45rem;
+  border-radius: 4px;
+  color: #1d4ed8;
+  font-weight: 600;
 }
 
 .wf-icon {
@@ -2972,43 +3002,84 @@ html, body {
   font-weight: 700;
 }
 
-.wf-title {
-  font-size: 0.88rem;
+.wf-title, .workflow-title {
+  font-size: 0.92rem;
   font-weight: 800;
   color: var(--text-dark);
+  margin: 0;
 }
 
-.wf-desc {
+.wf-desc, .workflow-desc {
   font-size: 0.8rem;
   color: var(--text-muted);
   line-height: 1.45;
+  margin: 0;
   flex: 1;
 }
 
-.wf-pipeline-strip {
+.wf-pipeline-strip, .workflow-pipeline {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.3rem;
 }
 
-.wf-step-chip {
+.pipeline-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pipeline-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.wf-step-chip, .pipeline-chip {
   font-family: var(--font-mono);
   font-size: 0.68rem;
   background: #f1f5f9;
   border: 1px solid #e2e8f0;
-  padding: 0.12rem 0.35rem;
+  padding: 0.15rem 0.4rem;
   border-radius: 3px;
-  color: #475569;
+  color: #334155;
+  font-weight: 500;
 }
 
-.wf-query-preview {
+.pipeline-arrow {
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.wf-query-preview, .workflow-query-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
   font-size: 0.78rem;
   color: var(--text-muted);
-  font-style: italic;
   background: #f8fafc;
-  padding: 0.45rem 0.65rem;
+  padding: 0.5rem 0.7rem;
   border-radius: var(--radius-xs);
   border-left: 3px solid #ee8a58;
+}
+
+.query-preview-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.query-preview-text {
+  font-size: 0.8rem;
+  color: var(--text-dark);
+  font-style: italic;
+  line-height: 1.4;
+  margin: 0;
 }
 
 .btn-select-wf {

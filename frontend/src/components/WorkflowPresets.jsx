@@ -9,7 +9,7 @@ const WORKFLOW_CARDS = [
     mode: 'pair',
     pipeline: ['Tool 2 (MSI)', 'Tool 5 (NDVI)', 'Tool 6 (QA)', 'Tool 7 (Temporal Change)', 'Tool 8 (LULC & DEM)', 'Tool 4 (Weather)'],
     description: 'Computes multi-temporal NDVI vegetation shifts, generates change_mask.tif, and cross-tabulates forest loss against ESA WorldCover and slope gradients.',
-    suggestedQuery: 'Analyze deforestation and forest canopy loss between 2024 and 2025. Compute NDVI for both dates, generate the change mask, and cross-tabulate forest loss against terrain slope.',
+    suggestedQuery: 'Analyze deforestation and forest canopy loss across the observation dates. Compute NDVI for both dates, generate the change mask, and cross-tabulate forest loss against terrain slope.',
     bbox: [-63.50, -10.20, -63.20, -9.95]
   },
   {
@@ -20,7 +20,7 @@ const WORKFLOW_CARDS = [
     mode: 'pair',
     pipeline: ['Tool 1 (Optical Check)', 'Tool 3 (SAR C-Band)', 'Tool 7 (Change Detection)', 'Tool 8 (Zonal Cross-Tab)'],
     description: 'Detects severe cloud obstruction on optical pass and falls back to Sentinel-1 GRD SAR backscatter dB drop to map surface water inundation.',
-    suggestedQuery: 'Assess monsoon flood inundation extent using cloud-penetrating Sentinel-1 SAR imagery. Detect backscatter drop in dB and overlay the water mask onto cropland vs built-up areas.',
+    suggestedQuery: 'Assess flood inundation extent using cloud-penetrating Sentinel-1 SAR imagery. Detect backscatter drop in dB and overlay the water mask onto cropland vs built-up areas.',
     bbox: [77.20, 28.58, 77.30, 28.70]
   },
   {

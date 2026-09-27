@@ -82,10 +82,10 @@ flowchart TD
 
 ### Workflow 1: Rapid Disaster & Deforestation Impact Assessment
 ```text
-                  1. User Query ("Analyze deforestation in AOI between 2024 and 2025")
+                  1. User Query ("Analyze deforestation in AOI across observation dates")
                                          │
                                          ▼
-                 2. Tool 2: fetch_multispectral_imagery (T1: 2024, T2: 2025)
+                 2. Tool 2: fetch_multispectral_imagery (T1: pre-event, T2: post-event)
                                          │
                                          ▼
                  3. Tool 5: compute_vegetation_indices (Compute NDVI for T1 and T2)
