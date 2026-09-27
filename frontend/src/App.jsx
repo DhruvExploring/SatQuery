@@ -162,6 +162,7 @@ export default function App() {
 
   const [mode, setMode] = useState(saved?.mode || 'single'); // 'single' | 'pair'
   const [isMobileViewerCollapsed, setIsMobileViewerCollapsed] = useState(false);
+  const [isStageExpanded, setIsStageExpanded] = useState(false);
   const [slotA, setSlotA] = useState(initialSlotA);
   const [slotB, setSlotB] = useState(saved?.slotB || emptySlot());
   const [imageHistory, setImageHistory] = useState(initialHistory);
@@ -701,7 +702,7 @@ export default function App() {
         </header>
 
         {/* Main Workstation Viewport: Responsive 2-Pane Architecture (Desktop = Side-by-Side, Mobile = Stacked Split) */}
-        <div className="vpro-main-grid">
+        <div className={`vpro-main-grid ${isStageExpanded ? 'stage-expanded' : ''}`}>
           {/* Left / Top Column: Satellite Visualizer (Always visible in mobile view) */}
           <div className={`vpro-column-left ${isMobileViewerCollapsed ? 'mobile-collapsed' : ''}`}>
             <div className="vpro-card imagery-workspace-card">
@@ -767,6 +768,8 @@ export default function App() {
                     onReset={() => handleRemoveSlot('A')}
                     disabled={isRunning}
                     onOpenModal={setModalRaster}
+                    isStageExpanded={isStageExpanded}
+                    onToggleStageExpanded={() => setIsStageExpanded((prev) => !prev)}
                   />
                 ) : (
                   <TemporalComparisonViewer

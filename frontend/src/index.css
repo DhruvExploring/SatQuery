@@ -587,9 +587,8 @@ html, body {
   align-items: center;
   justify-content: center;
   flex: 1;
-  min-height: 400px;
-  max-height: min(600px, calc(100vh - 230px));
-  aspect-ratio: 1 / 1;
+  min-height: 480px;
+  max-height: calc(100vh - 210px);
   margin: 0 auto;
   width: 100%;
   box-shadow: 0 12px 30px -6px rgba(0, 0, 0, 0.35), inset 0 0 25px rgba(0, 0, 0, 0.8);
@@ -597,20 +596,21 @@ html, body {
 
 .sat-image-canvas {
   position: relative;
-  width: 100%;
-  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
+  transform-origin: center center;
 }
 
 .sat-preview-img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
   display: block;
   user-select: none;
+  pointer-events: none;
+  object-fit: fill;
 }
 
 /* User Drawn Region of Interest (Terracotta / Melon Highlight) */
@@ -619,6 +619,7 @@ html, body {
   border: 2px dashed var(--clay-melon);
   background: rgba(245, 149, 99, 0.3);
   box-shadow: 0 0 15px rgba(245, 149, 99, 0.5);
+  pointer-events: none;
 }
 
 /* Model Detected Region (Mint Accent) */
@@ -627,6 +628,7 @@ html, body {
   border: 2.5px solid #7ecab6;
   background: rgba(126, 202, 182, 0.3);
   box-shadow: 0 0 15px rgba(126, 202, 182, 0.5);
+  pointer-events: none;
 }
 
 .sat-model-bbox-tag {
@@ -642,10 +644,207 @@ html, body {
   border-radius: var(--radius-xs);
 }
 
+.sat-model-polygon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 .sat-model-polygon polygon {
   fill: rgba(162, 222, 208, 0.35);
   stroke: #7ecab6;
   stroke-width: 2.5;
+}
+
+/* Floating Viewport Toolbar (Glassmorphism Pill) */
+.sat-viewport-toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(13, 20, 32, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+  padding: 0.25rem 0.45rem;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.65), 0 2px 6px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+  user-select: none;
+  pointer-events: auto;
+}
+
+.toolbar-tool-group,
+.toolbar-zoom-group {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 0.15rem;
+}
+
+.v-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.25rem 0.55rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.v-tool-btn:hover {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.v-tool-btn.active-roi {
+  background: rgba(245, 149, 99, 0.25);
+  border-color: rgba(245, 149, 99, 0.6);
+  color: #fdbca2;
+}
+
+.v-tool-btn.active-pan {
+  background: rgba(34, 211, 238, 0.2);
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #67e8f9;
+}
+
+.v-tool-btn.active-zoombox {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #7dd3fc;
+}
+
+.v-zoom-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.v-zoom-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.v-zoom-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.v-zoom-display {
+  background: transparent;
+  border: none;
+  color: #e2e8f0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.4rem;
+  min-width: 42px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.v-zoom-display:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.v-preset-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.v-preset-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.v-preset-btn.active {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.sat-viewport-pan-hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.68rem;
+  color: #94a3b8;
+  pointer-events: none;
+  z-index: 9;
+  letter-spacing: 0.02em;
+}
+
+/* Zoom to Area Drag Box */
+.sat-zoombox-rect {
+  position: absolute;
+  border: 2px dashed #38bdf8;
+  background: rgba(56, 189, 248, 0.22);
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.zoombox-rect-tag {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: #38bdf8;
+  color: #0c4a6e;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-xs);
+  letter-spacing: 0.02em;
 }
 
 /* User Marked ROI Chip Bar & AI Overlay Bar Below Canvas */
@@ -706,6 +905,45 @@ html, body {
 .btn-roi-clear:hover:not(:disabled) {
   color: #dc2626;
   background: rgba(239, 68, 68, 0.08);
+}
+
+.roi-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.btn-roi-zoom {
+  background: #ecfdf5;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #065f46;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-roi-zoom:hover {
+  background: #d1fae5;
+  border-color: #10b981;
+  color: #047857;
+}
+
+.active-stage-btn {
+  background: rgba(245, 149, 99, 0.18) !important;
+  border-color: rgba(245, 149, 99, 0.5) !important;
+  color: var(--clay-melon) !important;
+}
+
+.vpro-main-grid.stage-expanded {
+  grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
 }
 
 /* Comprehensive GeoTIFF Spatial & Raster Metadata Panel Visible Below Image */
@@ -1977,8 +2215,8 @@ html, body {
 }
 
 .t-img {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   display: block;
 }
@@ -3043,20 +3281,56 @@ html, body {
 }
 
 .raster-view-frame {
+  position: relative;
   background: #090e15;
   border: 1px solid rgba(0, 0, 0, 0.15);
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  max-height: 65vh;
+  max-height: 68vh;
+  min-height: 380px;
   overflow: hidden;
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.85);
 }
 
-.raster-view-frame img {
+.raster-view-canvas {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   max-width: 100%;
-  max-height: 65vh;
+  max-height: 100%;
+  user-select: none;
+  touch-action: none;
+}
+
+.raster-view-canvas img {
+  max-width: 100%;
+  max-height: 68vh;
   object-fit: contain;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+.raster-modal-toolbar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(13, 20, 32, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  padding: 0.28rem 0.55rem;
+  box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.7);
+  z-index: 10;
+  user-select: none;
 }
 
 .raster-modal-footer {
