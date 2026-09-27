@@ -16,6 +16,11 @@ def get_vision_provider() -> VisionProvider:
 
         return OpenAIVisionProvider()
 
+    if settings.vision_tool_provider == "anthropic":
+        from backend.vision.anthropic_provider import AnthropicVisionProvider
+
+        return AnthropicVisionProvider()
+
     if settings.vision_tool_provider == "local":
         from backend.vision.local_provider import LocalVisionProvider
 

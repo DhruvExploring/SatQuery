@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { checkHealth, fetchModelsStatus, resetConversationApi, runQueryStream } from './api/satqueryApi';
-import { deleteUploadedRaster } from './api/rasters';
+import { deleteUploadedRaster, collectRasterAssets } from './api/rasters';
 import ChatMessage from './components/ChatMessage';
 import DetailedLogsSidebar from './components/DetailedLogsSidebar';
+import ImageHistoryToggle from './components/ImageHistoryToggle';
 import ImageSlot from './components/ImageSlot';
 import RasterModal from './components/RasterModal';
 import SpectralInspector from './components/SpectralInspector';
@@ -91,40 +92,80 @@ function buildFilePayload(mode, slotA, slotB) {
   return payload;
 }
 
-function latestFetchedImagery(toolResults) {
-  const hits = (toolResults || []).filter(
-    (t) => FETCH_IMAGERY_TOOLS.has(t.tool) && t.result?.status === 'success' && t.result?.data?.file_path
-  );
-  return hits[hits.length - 1] || null;
-}
+function classifyRaster(tool = '', filePath = '', label = '') {
+  const t = String(tool).toLowerCase();
+  const p = String(filePath).toLowerCase();
+  const l = String(label).toLowerCase();
 
-function adoptFetchedImagery(setSlot, path, name) {
-  setSlot((prev) => ({
-    ...prev,
-    uploadedPath: path,
-    originalFilename: name,
-    boundsWgs84: null,
-    info: null,
-    roi: null,
-    modelBbox: null,
-    modelPolygon: null,
-    knowledgeBase: null
-  }));
-  inspectGeotiff(path).then((patch) => {
-    if (!patch) return;
-    setSlot((prev) => (prev.uploadedPath === path ? { ...prev, ...patch } : prev));
-  });
+  if (t.includes('sar') || p.includes('sar') || l.includes('sar')) {
+    return { category: 'SAR', shortLabel: 'SAR', badgeLabel: 'GENERATED · SAR' };
+  }
+  if (t.includes('vegetation') || p.includes('ndvi') || l.includes('ndvi')) {
+    return { category: 'NDVI', shortLabel: 'NDVI', badgeLabel: 'GENERATED · NDVI' };
+  }
+  if (p.includes('ndwi') || l.includes('ndwi') || t.includes('water')) {
+    return { category: 'NDWI', shortLabel: 'NDWI', badgeLabel: 'GENERATED · NDWI' };
+  }
+  if (p.includes('evi') || l.includes('evi')) {
+    return { category: 'EVI', shortLabel: 'EVI', badgeLabel: 'GENERATED · EVI' };
+  }
+  if (t.includes('optical') || t.includes('satellite') || t.includes('multispectral') || p.includes('optical')) {
+    return { category: 'Optical', shortLabel: 'Optical', badgeLabel: 'GENERATED · OPTICAL' };
+  }
+  if (t.includes('change') || p.includes('change') || p.includes('diff') || l.includes('diff')) {
+    return { category: 'Change Mask', shortLabel: 'Change', badgeLabel: 'GENERATED · CHANGE' };
+  }
+  if (t.includes('flood') || p.includes('flood') || l.includes('flood')) {
+    return { category: 'Flood', shortLabel: 'Flood', badgeLabel: 'GENERATED · FLOOD' };
+  }
+  if (t.includes('wildfire') || p.includes('wildfire') || p.includes('nbr')) {
+    return { category: 'Wildfire', shortLabel: 'Wildfire', badgeLabel: 'GENERATED · WILDFIRE' };
+  }
+  if (p.includes('mask') || l.includes('mask')) {
+    return { category: 'Mask', shortLabel: 'Mask', badgeLabel: 'GENERATED · MASK' };
+  }
+
+  const cleanLabel = (label || '').replace(/_/g, ' ').trim();
+  const short = cleanLabel ? cleanLabel.split(' ')[0].toUpperCase() : 'Raster';
+  return {
+    category: cleanLabel || 'Generated Raster',
+    shortLabel: short,
+    badgeLabel: `GENERATED · ${short}`
+  };
 }
 
 const emptySlot = () => ({});
 
 export default function App() {
   const saved = loadSession();
+  const initialSlotA = saved?.slotA || emptySlot();
+  let initialHistory = Array.isArray(saved?.imageHistory) ? saved.imageHistory : [];
+  if (initialHistory.length === 0 && initialSlotA?.uploadedPath) {
+    initialHistory = [
+      {
+        id: 'original',
+        type: 'original',
+        filename: initialSlotA.originalFilename || initialSlotA.uploadedPath.split('/').pop(),
+        filePath: initialSlotA.uploadedPath,
+        source: 'upload',
+        category: 'Original',
+        shortLabel: 'Original',
+        badgeLabel: 'ORIGINAL',
+        timestamp: Date.now(),
+        toolResult: null,
+        slotState: { ...initialSlotA }
+      }
+    ];
+  }
+  const initialActiveId =
+    saved?.activeImageId || (initialHistory.length > 0 ? initialHistory[0].id : null);
 
   const [mode, setMode] = useState(saved?.mode || 'single'); // 'single' | 'pair'
   const [isMobileViewerCollapsed, setIsMobileViewerCollapsed] = useState(false);
-  const [slotA, setSlotA] = useState(saved?.slotA || emptySlot());
+  const [slotA, setSlotA] = useState(initialSlotA);
   const [slotB, setSlotB] = useState(saved?.slotB || emptySlot());
+  const [imageHistory, setImageHistory] = useState(initialHistory);
+  const [activeImageId, setActiveImageId] = useState(initialActiveId);
   const [messages, setMessages] = useState(saved?.messages || []);
   const [input, setInput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
@@ -159,8 +200,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    saveSession({ mode, slotA, slotB, messages });
-  }, [mode, slotA, slotB, messages]);
+    saveSession({ mode, slotA, slotB, messages, imageHistory, activeImageId });
+  }, [mode, slotA, slotB, messages, imageHistory, activeImageId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -180,17 +221,149 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleRemoveSlot = (slotKey) => {
-    const targetSlot = slotKey === 'A' ? slotA : slotB;
-    const path = targetSlot?.uploadedPath;
+  const handleSelectImage = (id) => {
+    if (id === activeImageId) return;
+    const target = imageHistory.find((item) => item.id === id);
+    if (!target) return;
+
+    // Cache current slotA state into current active item before switching
+    setImageHistory((prevHist) =>
+      prevHist.map((item) =>
+        item.id === activeImageId ? { ...item, slotState: { ...slotA } } : item
+      )
+    );
+
+    setActiveImageId(id);
+
+    if (target.slotState) {
+      setSlotA(target.slotState);
+    } else {
+      const fallback = {
+        uploadedPath: target.filePath,
+        originalFilename: target.filename || target.filePath.split('/').pop(),
+        boundsWgs84: null,
+        info: null,
+        roi: null,
+        modelBbox: null,
+        modelPolygon: null,
+        knowledgeBase: null,
+        isUserUpload: target.type === 'original'
+      };
+      setSlotA(fallback);
+      inspectGeotiff(target.filePath).then((patch) => {
+        if (!patch) return;
+        setSlotA((curr) => (curr.uploadedPath === target.filePath ? { ...curr, ...patch } : curr));
+        setImageHistory((prevHist) =>
+          prevHist.map((it) =>
+            it.id === id ? { ...it, slotState: { ...fallback, ...patch } } : it
+          )
+        );
+      });
+    }
+  };
+
+  const handleRemoveImage = (id, e) => {
+    e?.stopPropagation();
+    const itemToRemove = imageHistory.find((item) => item.id === id);
+    if (!itemToRemove) return;
+
+    const path = itemToRemove.filePath;
     if (path && typeof path === 'string' && path.startsWith('uploads/')) {
       deleteUploadedRaster(path).catch((err) => {
         console.warn('Could not delete temporary raster on server:', err);
       });
     }
+
+    const newHistory = imageHistory.filter((item) => item.id !== id);
+    setImageHistory(newHistory);
+
+    if (activeImageId === id) {
+      if (newHistory.length > 0) {
+        const nextActive =
+          newHistory.find((item) => item.type === 'original') || newHistory[newHistory.length - 1];
+        setActiveImageId(nextActive.id);
+        setSlotA(
+          nextActive.slotState || {
+            uploadedPath: nextActive.filePath,
+            originalFilename: nextActive.filename,
+            boundsWgs84: null,
+            info: null,
+            roi: null
+          }
+        );
+      } else {
+        setActiveImageId(null);
+        setSlotA(emptySlot());
+      }
+    }
+  };
+
+  const handleSlotAChange = (patch) => {
+    setSlotA((prev) => {
+      const next = { ...prev, ...patch };
+
+      if (next.uploadedPath) {
+        setImageHistory((prevHist) => {
+          if (patch.isUserUpload) {
+            const origItem = {
+              id: 'original',
+              type: 'original',
+              filename: next.originalFilename || next.uploadedPath.split('/').pop(),
+              filePath: next.uploadedPath,
+              source: 'upload',
+              category: 'Original',
+              shortLabel: 'Original',
+              badgeLabel: 'ORIGINAL',
+              timestamp: Date.now(),
+              toolResult: null,
+              slotState: next
+            };
+            const withoutOrig = prevHist.filter((item) => item.id !== 'original');
+            return [origItem, ...withoutOrig];
+          }
+
+          return prevHist.map((item) => {
+            if (item.id === activeImageId) {
+              return {
+                ...item,
+                slotState: next,
+                filename: next.originalFilename || item.filename,
+                filePath: next.uploadedPath || item.filePath
+              };
+            }
+            return item;
+          });
+        });
+
+        if (patch.isUserUpload) {
+          setActiveImageId('original');
+        }
+      }
+
+      return next;
+    });
+  };
+
+  const handleRemoveSlot = (slotKey) => {
     if (slotKey === 'A') {
-      setSlotA(emptySlot());
+      if (activeImageId) {
+        handleRemoveImage(activeImageId);
+      } else {
+        const path = slotA?.uploadedPath;
+        if (path && typeof path === 'string' && path.startsWith('uploads/')) {
+          deleteUploadedRaster(path).catch((err) => {
+            console.warn('Could not delete temporary raster on server:', err);
+          });
+        }
+        setSlotA(emptySlot());
+      }
     } else {
+      const path = slotB?.uploadedPath;
+      if (path && typeof path === 'string' && path.startsWith('uploads/')) {
+        deleteUploadedRaster(path).catch((err) => {
+          console.warn('Could not delete temporary raster on server:', err);
+        });
+      }
       setSlotB(emptySlot());
     }
   };
@@ -203,9 +376,14 @@ export default function App() {
       abortControllerRef.current = null;
     }
 
-    // 2. Identify active temporary uploaded files
-    const tempFiles = [slotA?.uploadedPath, slotB?.uploadedPath].filter(
-      (p) => typeof p === 'string' && p.startsWith('uploads/')
+    // 2. Identify active temporary uploaded files across slots and image history
+    const allPaths = [
+      slotA?.uploadedPath,
+      slotB?.uploadedPath,
+      ...imageHistory.map((it) => it.filePath)
+    ];
+    const tempFiles = Array.from(
+      new Set(allPaths.filter((p) => typeof p === 'string' && p.startsWith('uploads/')))
     );
 
     // 3. Reset all conversation, TIFF, metadata, results, and telemetry states
@@ -216,6 +394,8 @@ export default function App() {
     setIsRunning(false);
     setSlotA(emptySlot());
     setSlotB(emptySlot());
+    setImageHistory([]);
+    setActiveImageId(null);
     setMode('single');
     setModalRaster(null);
     setIsWorkflowsOpen(false);
@@ -240,17 +420,7 @@ export default function App() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    const tempFiles = [slotA?.uploadedPath, slotB?.uploadedPath].filter(
-      (p) => typeof p === 'string' && p.startsWith('uploads/')
-    );
-    tempFiles.forEach((p) => deleteUploadedRaster(p).catch(() => {}));
-
     setMode(newMode);
-    setSlotA(emptySlot());
-    setSlotB(emptySlot());
-    setMessages([]);
-    setLiveSteps([]);
-    setIsRunning(false);
   };
 
   const handleSelectWorkflow = (wf) => {
@@ -368,18 +538,78 @@ export default function App() {
       const modelBbox = markResult?.result?.bbox || null;
       const modelPolygon = markResult?.result?.polygon || null;
 
-      if (activeSlot === 'A') setSlotA((prev) => ({ ...prev, modelBbox, modelPolygon }));
-      else if (activeSlot === 'B') setSlotB((prev) => ({ ...prev, modelBbox, modelPolygon }));
+      if (activeSlot === 'A') {
+        setSlotA((prev) => ({ ...prev, modelBbox, modelPolygon }));
+        setImageHistory((prevHist) =>
+          prevHist.map((item) =>
+            item.id === activeImageId
+              ? { ...item, slotState: { ...item.slotState, modelBbox, modelPolygon } }
+              : item
+          )
+        );
+      } else if (activeSlot === 'B') {
+        setSlotB((prev) => ({ ...prev, modelBbox, modelPolygon }));
+      }
 
-      const latestFetch = latestFetchedImagery(body?.tool_results);
-      if (latestFetch) {
-        const newPath = latestFetch.result.data.file_path;
-        const newName = latestFetch.result.data.file_name || newPath.split('/').pop();
-        if (mode === 'single') {
-          if (slotA.uploadedPath !== newPath) adoptFetchedImagery(setSlotA, newPath, newName);
-        } else if (slotA.uploadedPath !== newPath && slotB.uploadedPath !== newPath) {
-          if (!slotA.uploadedPath) adoptFetchedImagery(setSlotA, newPath, newName);
-          else if (!slotB.uploadedPath) adoptFetchedImagery(setSlotB, newPath, newName);
+      // Collect any newly generated raster assets across all executed tools
+      const rasterAssets = collectRasterAssets(body?.tool_results);
+      if (rasterAssets.length > 0) {
+        // Collect existing filePaths to avoid duplicates
+        const existingPaths = new Set(imageHistory.map((it) => it.filePath));
+        const origHist = imageHistory.find((it) => it.type === 'original');
+        if (origHist?.filePath) existingPaths.add(origHist.filePath);
+
+        const newItems = [];
+        rasterAssets.forEach((asset, idx) => {
+          if (!asset.path || existingPaths.has(asset.path)) return;
+          existingPaths.add(asset.path);
+
+          const classification = classifyRaster(asset.tool, asset.path, asset.label);
+          const newId = `gen-${Date.now()}-${idx}`;
+          const newHistItem = {
+            id: newId,
+            type: 'generated',
+            filename: asset.path.split('/').pop(),
+            filePath: asset.path,
+            source: asset.tool || 'generated',
+            category: classification.category,
+            shortLabel: classification.shortLabel,
+            badgeLabel: classification.badgeLabel,
+            timestamp: Date.now(),
+            toolResult: (body?.tool_results || []).find((t) => t.tool === asset.tool) || null,
+            slotState: {
+              uploadedPath: asset.path,
+              originalFilename: asset.path.split('/').pop(),
+              boundsWgs84: slotA.boundsWgs84 || null,
+              info: null,
+              roi: null,
+              modelBbox: null,
+              modelPolygon: null,
+              knowledgeBase: null,
+              isUserUpload: false
+            }
+          };
+
+          // Trigger asynchronous inspection for new raster to populate bounds and metadata
+          inspectGeotiff(asset.path).then((patch) => {
+            if (!patch) return;
+            setImageHistory((prevHist) =>
+              prevHist.map((it) =>
+                it.id === newId ? { ...it, slotState: { ...it.slotState, ...patch } } : it
+              )
+            );
+            setSlotA((curr) => (curr.uploadedPath === asset.path ? { ...curr, ...patch } : curr));
+          });
+
+          newItems.push(newHistItem);
+        });
+
+        if (newItems.length > 0) {
+          setImageHistory((prev) => [...prev, ...newItems]);
+          // Automatically switch left display to latest generated image
+          const latestItem = newItems[newItems.length - 1];
+          setActiveImageId(latestItem.id);
+          setSlotA(latestItem.slotState);
         }
       }
     }
@@ -391,6 +621,12 @@ export default function App() {
 
   const latestToolResults = [...messages].reverse().find((m) => m.role === 'assistant')?.toolResults || [];
   const totalErrorCount = lastErrors.length + (backendUp === false ? 1 : 0);
+
+  const activeHistoryItem =
+    imageHistory.find((item) => item.id === activeImageId) ||
+    imageHistory.find((item) => item.type === 'original') ||
+    imageHistory[0] ||
+    null;
 
   return (
     <div className="vpro-app-ambient">
@@ -433,7 +669,6 @@ export default function App() {
               className={`pill-tool-btn ${isWorkflowsOpen ? 'active' : ''}`}
               onClick={() => setIsWorkflowsOpen(true)}
             >
-              <span className="tool-icon">⚡</span>
               <span>Workflows</span>
             </button>
 
@@ -442,7 +677,6 @@ export default function App() {
               className={`pill-tool-btn ${isSpectralOpen ? 'active' : ''}`}
               onClick={() => setIsSpectralOpen(true)}
             >
-              <span className="tool-icon">🔬</span>
               <span>Spectral Lab</span>
             </button>
           </div>
@@ -474,11 +708,15 @@ export default function App() {
               <div className="card-top-row">
                 <div className="card-top-title-group">
                   <h3>Satellite Scene Assets</h3>
-                  {slotA.uploadedPath && (
+                  {activeHistoryItem?.badgeLabel ? (
+                    <span className="mobile-active-fn-badge" title={activeHistoryItem.filename}>
+                      {activeHistoryItem.badgeLabel}
+                    </span>
+                  ) : slotA.uploadedPath ? (
                     <span className="mobile-active-fn-badge" title={slotA.originalFilename}>
                       {slotA.originalFilename}
                     </span>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="card-top-actions">
@@ -508,11 +746,24 @@ export default function App() {
               </div>
 
               <div className="visualizer-content-stage">
+                {mode === 'single' && imageHistory.length > 0 && (
+                  <ImageHistoryToggle
+                    imageHistory={imageHistory}
+                    activeImageId={activeImageId}
+                    onSelectImage={handleSelectImage}
+                    onRemoveImage={handleRemoveImage}
+                    disabled={isRunning}
+                  />
+                )}
                 {mode === 'single' ? (
                   <ImageSlot
                     label="Target Satellite Scene (.tif/.tiff)"
+                    badgeLabel={
+                      activeHistoryItem?.badgeLabel ||
+                      (slotA.uploadedPath ? 'ORIGINAL' : null)
+                    }
                     slot={slotA}
-                    onChange={(patch) => setSlotA((prev) => ({ ...prev, ...patch }))}
+                    onChange={handleSlotAChange}
                     onReset={() => handleRemoveSlot('A')}
                     disabled={isRunning}
                     onOpenModal={setModalRaster}

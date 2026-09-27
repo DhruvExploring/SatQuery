@@ -14,14 +14,21 @@ if (typeof window !== 'undefined') {
 
     const host = window.location.hostname || 'localhost';
     const endpoints = [
-      `http://${host}:35729/live-reload`,
-      '/live-reload'
+      '/live-reload',
+      `http://${host}:35729/live-reload`
     ];
     let endpointIdx = 0;
     let eventSource = null;
     let retryTimeout = null;
+    let failedAttempts = 0;
+    const MAX_FAILED_ATTEMPTS = 3;
 
     function connect() {
+      if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
+        // Dev watcher is not running; stop reconnecting to avoid console error spam
+        return;
+      }
+
       if (eventSource) {
         eventSource.close();
         eventSource = null;
@@ -33,12 +40,11 @@ if (typeof window !== 'undefined') {
         eventSource = new EventSource(sseUrl);
 
         eventSource.onopen = () => {
-          console.log('[AutoRefresh] Connected to live-reload stream at', sseUrl);
+          failedAttempts = 0;
         };
 
         eventSource.onmessage = (event) => {
           if (event.data === 'reload') {
-            console.log('[AutoRefresh] Code change detected! Auto-refreshing web app...');
             window.location.reload();
           }
         };
@@ -48,18 +54,25 @@ if (typeof window !== 'undefined') {
             eventSource.close();
             eventSource = null;
           }
-          // Rotate endpoint on error and retry in 2.5s
+          failedAttempts++;
           endpointIdx++;
           clearTimeout(retryTimeout);
-          retryTimeout = setTimeout(connect, 2500);
+          if (failedAttempts < MAX_FAILED_ATTEMPTS) {
+            retryTimeout = setTimeout(connect, 3000);
+          }
         };
-      } catch (err) {
+      } catch {
+        failedAttempts++;
         endpointIdx++;
         clearTimeout(retryTimeout);
-        retryTimeout = setTimeout(connect, 2500);
+        if (failedAttempts < MAX_FAILED_ATTEMPTS) {
+          retryTimeout = setTimeout(connect, 3000);
+        }
       }
     }
 
-    connect();
+    if (['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+      connect();
+    }
   })();
 }

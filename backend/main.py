@@ -70,17 +70,29 @@ def _warm_up_llm_clients() -> None:
                 exc,
             )
 
-    if settings.vision_tool_enabled and settings.vision_tool_provider == "openai":
-        try:
-            logger.info("Warming up vision tool SDK import (openai)...")
-            import langchain_openai  # noqa: F401
+    if settings.vision_tool_enabled:
+        if settings.vision_tool_provider == "openai":
+            try:
+                logger.info("Warming up vision tool SDK import (openai)...")
+                import langchain_openai  # noqa: F401
 
-            logger.info("Vision tool SDK ready.")
-        except Exception as exc:
-            logger.warning(
-                "Vision tool warm-up failed (%r) — will import lazily on first call.",
-                exc,
-            )
+                logger.info("Vision tool SDK ready.")
+            except Exception as exc:
+                logger.warning(
+                    "Vision tool warm-up failed (%r) — will import lazily on first call.",
+                    exc,
+                )
+        elif settings.vision_tool_provider == "anthropic":
+            try:
+                logger.info("Warming up vision tool SDK import (anthropic)...")
+                import langchain_anthropic  # noqa: F401
+
+                logger.info("Vision tool SDK ready.")
+            except Exception as exc:
+                logger.warning(
+                    "Vision tool warm-up failed (%r) — will import lazily on first call.",
+                    exc,
+                )
 
 
 @asynccontextmanager

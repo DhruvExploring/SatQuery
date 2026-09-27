@@ -32,7 +32,6 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
         {/* Drawer Header */}
         <div className="logs-drawer-header">
           <div className="logs-header-title">
-            <span className="logs-icon">⚙️</span>
             <div>
               <h3>Engine Telemetry & Trace</h3>
               <p>Node steps, execution timings, and tool outputs</p>
@@ -139,7 +138,7 @@ export default function LogsDrawer({ isOpen, onClose, executionTrace, errors, ra
             <div className="raw-log-view">
               <div className="raw-actions-bar">
                 <button type="button" className="btn-copy-raw" onClick={handleCopyRaw}>
-                  {copiedRaw ? '✓ Copied JSON' : '📋 Copy JSON Telemetry'}
+                  {copiedRaw ? 'Copied JSON' : 'Copy JSON Telemetry'}
                 </button>
               </div>
               {rawToolResults && rawToolResults.length > 0 ? (

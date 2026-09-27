@@ -5,7 +5,7 @@ const WORKFLOW_CARDS = [
     id: 'deforestation',
     title: 'Deforestation & Canopy Loss Impact',
     tag: 'T1/T2 Multi-Spectral + LULC',
-    icon: '🌲',
+    code: 'FOREST',
     mode: 'pair',
     pipeline: ['Tool 2 (MSI)', 'Tool 5 (NDVI)', 'Tool 6 (QA)', 'Tool 7 (Temporal Change)', 'Tool 8 (LULC & DEM)', 'Tool 4 (Weather)'],
     description: 'Computes multi-temporal NDVI vegetation shifts, generates change_mask.tif, and cross-tabulates forest loss against ESA WorldCover and slope gradients.',
@@ -16,7 +16,7 @@ const WORKFLOW_CARDS = [
     id: 'flood_sar',
     title: 'All-Weather Flood Inundation & SAR',
     tag: 'Cloud-Penetrating Radar',
-    icon: '🌊',
+    code: 'SAR',
     mode: 'pair',
     pipeline: ['Tool 1 (Optical Check)', 'Tool 3 (SAR C-Band)', 'Tool 7 (Change Detection)', 'Tool 8 (Zonal Cross-Tab)'],
     description: 'Detects severe cloud obstruction on optical pass and falls back to Sentinel-1 GRD SAR backscatter dB drop to map surface water inundation.',
@@ -27,7 +27,7 @@ const WORKFLOW_CARDS = [
     id: 'wildfire_dnbr',
     title: 'Wildfire Burn Severity (dNBR)',
     tag: 'Spectral Biophysical Index',
-    icon: '🔥',
+    code: 'BURN',
     mode: 'pair',
     pipeline: ['Tool 2 (NIR + SWIR2)', 'Tool 5 (NBR Calculation)', 'Tool 7 (Delta NBR Algebra)', 'Tool 8 (Patch Fragmentation)'],
     description: 'Calculates normalized burn ratio (NBR) from NIR and SWIR bands for pre- and post-fire rasters, categorizing damage into unburned, moderate, and high severity.',
@@ -38,7 +38,7 @@ const WORKFLOW_CARDS = [
     id: 'drought_stress',
     title: 'Agricultural Drought & Moisture Stress',
     tag: 'Biophysical + ERA5 Weather',
-    icon: '🌾',
+    code: 'DROUGHT',
     mode: 'single',
     pipeline: ['Tool 2 (MSI)', 'Tool 5 (NDVI + NDMI)', 'Tool 4 (ECMWF Weather & Evapotranspiration)'],
     description: 'Couples satellite plant canopy moisture (NDMI) with Open-Meteo precipitation deficit and vapor pressure deficit (VPD) to identify severe drought stress.',
@@ -49,7 +49,7 @@ const WORKFLOW_CARDS = [
     id: 'terrain_slope',
     title: 'Topographical Slope & Landcover Matrix',
     tag: 'Discrete GIS & Copernicus DEM',
-    icon: '🏔️',
+    code: 'TERRAIN',
     mode: 'single',
     pipeline: ['Tool 8 (ESA WorldCover)', 'Copernicus DEM (30m)', 'Tool 8 (Slope Gradient & Fragmentation)'],
     description: 'Ingests land cover classification and DEM rasters, calculates 2D spatial slope in degrees, and profiles 8-connectivity patch fragmentation and Largest Patch Index (LPI).',
@@ -60,7 +60,7 @@ const WORKFLOW_CARDS = [
     id: 'spatial_geocoding',
     title: 'Spatial Geocoding & Affine Feature Markup',
     tag: 'Vector to Raster Projection',
-    icon: '📍',
+    code: 'GEOCODE',
     pipeline: ['Tool 10 (Forward/Reverse Geocode)', 'Tool 10 (Scene POI Discovery)', 'Tool 11 (Affine Mathematical Markup)'],
     mode: 'single',
     description: 'Identifies the scene identity and points of interest inside the bounding box and mathematically projects lat/long coordinates onto pixel coordinates without hallucination.',
@@ -86,7 +86,7 @@ export default function WorkflowPresets({ onSelectWorkflow }) {
         {WORKFLOW_CARDS.map((wf) => (
           <div key={wf.id} className="workflow-card">
             <div className="workflow-card-top">
-              <div className="workflow-icon-wrap">{wf.icon}</div>
+              <span className="wf-tag">{wf.code}</span>
               <div className="workflow-tag-group">
                 <span className="workflow-tag">{wf.tag}</span>
                 <span className="workflow-mode-pill">{wf.mode === 'pair' ? 'Dual Temporal Pair' : 'Single Scene'}</span>

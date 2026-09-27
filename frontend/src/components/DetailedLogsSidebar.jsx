@@ -105,7 +105,6 @@ export default function DetailedLogsSidebar({
         {/* Drawer Header */}
         <header className="sidebar-drawer-header">
           <div className="drawer-title-group">
-            <span className="drawer-icon">⚡</span>
             <div>
               <h2 className="drawer-title">Detailed System Telemetry</h2>
               <span className="drawer-subtitle">Backend Tool Calls & GeoTIFF Inspector</span>

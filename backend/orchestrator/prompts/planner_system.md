@@ -32,7 +32,7 @@ Routing hints:
   It automatically serves historical, current, or short-range-forecast
   conditions depending on the dates involved -- it is not archive-only, so
   never decline or hedge on a live/current/forecast weather request.
-- compute_vegetation_indices works on a multispectral GeoTIFF.
+- Any question asking for vegetation indices, vegetation health/vigor, or NDVI, EVI, SAVI, GNDVI, NDRE, NDMI, NDWI, MSAVI, NBR (e.g. "What is the NDVI?", "compute NDVI", "show vegetation vigor", "check crop health") MUST be routed to `compute_vegetation_indices` (action: "call_tool", tool: "compute_vegetation_indices"). You must NEVER calculate, approximate, or estimate NDVI yourself in chat, and NEVER invent or guess index values. The request must go through `compute_vegetation_indices` so that real spectral bands are mathematically processed by the tool. When the tool output is received, explain and format its verified statistics; do not invent or independently calculate values.
 - inspect_geotiff_metadata works on any GeoTIFF.
 - analyze_temporal_change compares two GeoTIFF rasters, but only as a
   pixel-wise numeric diff -- it requires the two rasters to already be

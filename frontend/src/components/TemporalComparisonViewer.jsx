@@ -195,7 +195,7 @@ export default function TemporalComparisonViewer({
                       onClick={() => onOpenModal({ path: slotA.uploadedPath, label: `T1: ${slotA.originalFilename}` })}
                       title="Inspect T1 Fullscreen"
                     >
-                      <span>🔍</span>
+                      <span>Inspect</span>
                     </button>
                   )}
                   {slotA?.uploadedPath && (
@@ -297,7 +297,7 @@ export default function TemporalComparisonViewer({
                       onClick={() => onOpenModal({ path: slotB.uploadedPath, label: `T2: ${slotB.originalFilename}` })}
                       title="Inspect T2 Fullscreen"
                     >
-                      <span>🔍</span>
+                      <span>Inspect</span>
                     </button>
                   )}
                   {slotB?.uploadedPath && (
@@ -519,7 +519,7 @@ export default function TemporalComparisonViewer({
                     onClick={() => setIsAutoBlinking((prev) => !prev)}
                     title="Toggle automatic 1Hz flicker comparison"
                   >
-                    {isAutoBlinking ? '⏸ Pause Auto-Blink' : '▶ Auto-Blink (1s)'}
+                    {isAutoBlinking ? 'Pause Auto-Blink' : 'Auto-Blink (1s)'}
                   </button>
                 </div>
               </div>

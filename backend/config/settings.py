@@ -81,7 +81,7 @@ class Settings:
 
     # --- Vision tool role ---
     vision_tool_enabled: bool = False
-    vision_tool_provider: str = "openai"  # openai | local
+    vision_tool_provider: str = "openai"  # openai | anthropic | local
     vision_tool_model: str = "gpt-4o-mini"
     vision_tool_api_key: str | None = None
     vision_tool_base_url: str | None = None
@@ -106,9 +106,9 @@ def load_settings() -> Settings:
     vision_tool_provider = (
         _clean_str(os.getenv("SATQUERY_VISION_TOOL_PROVIDER")) or "openai"
     ).lower()
-    if vision_tool_enabled and vision_tool_provider not in {"openai", "local"}:
+    if vision_tool_enabled and vision_tool_provider not in {"openai", "anthropic", "local"}:
         raise ValueError(
-            "SATQUERY_VISION_TOOL_PROVIDER must be one of: openai, local. "
+            "SATQUERY_VISION_TOOL_PROVIDER must be one of: openai, anthropic, local. "
             f"Got {vision_tool_provider!r}."
         )
 
@@ -120,8 +120,11 @@ def load_settings() -> Settings:
             orchestrator_api_key = _clean_str(os.getenv("ANTHROPIC_API_KEY"))
 
     vision_tool_api_key = _clean_str(os.getenv("SATQUERY_VISION_TOOL_API_KEY"))
-    if vision_tool_api_key is None and vision_tool_provider == "openai":
-        vision_tool_api_key = _clean_str(os.getenv("OPENAI_API_KEY"))
+    if vision_tool_api_key is None:
+        if vision_tool_provider == "openai":
+            vision_tool_api_key = _clean_str(os.getenv("OPENAI_API_KEY"))
+        elif vision_tool_provider == "anthropic":
+            vision_tool_api_key = _clean_str(os.getenv("ANTHROPIC_API_KEY")) or orchestrator_api_key
 
     return Settings(
         orchestrator_provider=orchestrator_provider,

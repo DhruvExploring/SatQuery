@@ -21,7 +21,6 @@ export default function RasterModal({ raster, onClose }) {
       <div className="raster-modal-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="raster-modal-head">
           <div className="raster-modal-title">
-            <span className="raster-icon">🗺️</span>
             <div>
               <h3>{raster.label || filename}</h3>
               <code className="raster-path">{raster.path}</code>

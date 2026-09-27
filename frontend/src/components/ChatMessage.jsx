@@ -3,13 +3,13 @@ import { collectRasterAssets, rasterDownloadUrl, rasterPreviewUrl } from '../api
 import { toolLabel } from '../lib/toolLabels';
 
 const KNOWN_SECTIONS = [
-  { key: 'observation', title: 'Observation', icon: '🛰️', accent: 'sky' },
-  { key: 'evidence', title: 'Evidence', icon: '📊', accent: 'indigo' },
-  { key: 'analysis', title: 'Analysis', icon: '⚡', accent: 'orange' },
-  { key: 'confidence', title: 'Confidence', icon: '🎯', accent: 'emerald' },
-  { key: 'summary', title: 'Summary', icon: '🔍', accent: 'slate' },
-  { key: 'findings', title: 'Findings', icon: '📋', accent: 'indigo' },
-  { key: 'recommendation', title: 'Recommendation', icon: '💡', accent: 'amber' }
+  { key: 'observation', title: 'Observation', accent: 'sky' },
+  { key: 'evidence', title: 'Evidence', accent: 'indigo' },
+  { key: 'analysis', title: 'Analysis', accent: 'orange' },
+  { key: 'confidence', title: 'Confidence', accent: 'emerald' },
+  { key: 'summary', title: 'Summary', accent: 'slate' },
+  { key: 'findings', title: 'Findings', accent: 'indigo' },
+  { key: 'recommendation', title: 'Recommendation', accent: 'amber' }
 ];
 
 function renderInlineMarkdown(text) {
@@ -88,14 +88,12 @@ function parseStructuredText(rawText) {
       const known = KNOWN_SECTIONS.find((s) => s.key === secName.toLowerCase()) || {
         key: secName.toLowerCase(),
         title: secName,
-        icon: '📌',
         accent: 'slate'
       };
 
       currentSec = {
         type: known.key,
         title: known.title,
-        icon: known.icon,
         accent: known.accent,
         lines: remainder ? [remainder] : []
       };
@@ -108,7 +106,6 @@ function parseStructuredText(rawText) {
     sections.push({
       type: currentSec.type,
       title: currentSec.title,
-      icon: currentSec.icon,
       accent: currentSec.accent,
       content: currentSec.lines.join('\n').trim()
     });
@@ -124,7 +121,6 @@ function StructuredSection({ section }) {
     <div className={`chat-section-block section-${section.accent || 'slate'}`}>
       {section.title && (
         <div className="section-head">
-          <span className="section-icon">{section.icon || '📌'}</span>
           <span className="section-title">{section.title}</span>
         </div>
       )}
@@ -189,7 +185,7 @@ export default function ChatMessage({ message, onOpenRaster }) {
         {/* Assistant Header */}
         <div className="assistant-bubble-head">
           <div className="assistant-meta-left">
-            <span className="sat-agent-dot">🛰️</span>
+            <span className="sat-agent-dot" />
             <span className="assistant-name">SatQuery Intelligence</span>
             <span className={`assistant-status-tag ${statusClass}`}>
               {message.status === 'success' || message.status === 'ok' ? 'Resolved' : message.status === 'clarify' ? 'Clarification' : 'Notice'}
@@ -255,7 +251,7 @@ export default function ChatMessage({ message, onOpenRaster }) {
                 >
                   <div className="preview-img-container">
                     <img src={rasterPreviewUrl(r.path, 512)} alt={r.label} />
-                    <span className="preview-zoom-badge">🔍 Zoom</span>
+                    <span className="preview-zoom-badge">Inspect</span>
                   </div>
                   <div className="preview-meta-row">
                     <span className="preview-label" title={r.label}>{r.label}</span>
@@ -267,7 +263,7 @@ export default function ChatMessage({ message, onOpenRaster }) {
                       onClick={(e) => e.stopPropagation()}
                       download
                     >
-                      GeoTIFF ⤓
+                      GeoTIFF
                     </a>
                   </div>
                 </div>

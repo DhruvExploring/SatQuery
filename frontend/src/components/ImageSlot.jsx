@@ -18,7 +18,7 @@ const clamp01 = (v) => Math.min(1, Math.max(0, v));
  * whatever the first update (before the upload started) had just cleared.
  * `onReset` fully clears the slot (a patch/merge can't remove keys).
  */
-export default function ImageSlot({ label, slot, onChange, onReset, disabled, onOpenModal }) {
+export default function ImageSlot({ label, badgeLabel, slot, onChange, onReset, disabled, onOpenModal }) {
   const fileInputRef = useRef(null);
   const imgWrapRef = useRef(null);
   const uploadTokenRef = useRef(0);
@@ -51,7 +51,8 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
       roi: null,
       modelBbox: null,
       modelPolygon: null,
-      knowledgeBase: null
+      knowledgeBase: null,
+      isUserUpload: true
     });
 
     const uploaded = await uploadRasterFile(picked);
@@ -66,7 +67,8 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
       uploading: false,
       uploadedPath: uploaded.path,
       originalFilename: picked.name,
-      knowledgeBase: uploaded.knowledgeBase
+      knowledgeBase: uploaded.knowledgeBase,
+      isUserUpload: true
     });
     runInspection(uploaded.path, myToken);
   };
@@ -146,7 +148,19 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
       {/* Top Header Row */}
       <div className="sat-slot-header">
         <div className="slot-title-group">
-          <span className="slot-role-tag">{label}</span>
+          {badgeLabel ? (
+            <span
+              className={`slot-role-tag ${
+                badgeLabel.startsWith('ORIGINAL')
+                  ? 'badge-original'
+                  : 'badge-generated'
+              }`}
+            >
+              {badgeLabel}
+            </span>
+          ) : (
+            <span className="slot-role-tag">{label}</span>
+          )}
           {slot.originalFilename && (
             <span className="slot-filename" title={slot.originalFilename}>
               {slot.originalFilename}
@@ -239,7 +253,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
               />
             ) : (
               <div className="sat-preview-failed">
-                <span>⚠️ Could not render raster preview</span>
+                <span>Could not render raster preview</span>
               </div>
             )}
 
@@ -278,9 +292,6 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
                 </div>
               )
             )}
-
-            {/* Hint overlay */}
-            <div className="sat-canvas-hint">Drag a box on the image to focus your query</div>
           </div>
         </div>
       )}
@@ -290,7 +301,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
         <div className="sat-roi-chip-bar">
           <div className="roi-details-wrap">
             <span className="roi-active-label">
-              🎯 <strong>Focused ROI:</strong> {roiBbox ? formatBbox(roiBbox) : 'Custom Region Marked'}
+              <strong>Focused ROI:</strong> {roiBbox ? formatBbox(roiBbox) : 'Custom Region Marked'}
             </span>
             {roiBbox && (
               <span className="roi-center-sub">
@@ -313,7 +324,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
       {slot.uploadedPath && (slot.modelPolygon || slot.modelBbox) && (
         <div className="sat-roi-chip-bar ai-detected">
           <span className="roi-active-label">
-            ✨ AI identified region from analysis
+            AI identified region from analysis
           </span>
           <button
             type="button"
@@ -331,12 +342,11 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
         <div className="sat-image-metadata-card">
           <div className="metadata-card-header">
             <div className="meta-header-title">
-              <span className="meta-icon">🛰️</span>
               <span>SCENE SPATIAL METADATA</span>
             </div>
             <div className="meta-header-badges">
               <span className={`meta-geo-badge ${slot.info?.georeferenced !== false ? 'geo-ok' : 'geo-none'}`}>
-                {slot.info?.georeferenced !== false ? '✓ Georeferenced' : '⚠️ Unreferenced'}
+                {slot.info?.georeferenced !== false ? 'Georeferenced' : 'Unreferenced'}
               </span>
               {slot.info?.crs && (
                 <span className="meta-crs-badge">{slot.info.crs}</span>
@@ -382,7 +392,7 @@ export default function ImageSlot({ label, slot, onChange, onReset, disabled, on
                     onClick={copyBbox}
                     title="Copy bounding box array to clipboard"
                   >
-                    {copiedBbox ? '✓ Copied' : '📋 Copy'}
+                    {copiedBbox ? 'Copied' : 'Copy'}
                   </button>
                 </div>
                 <code className="cell-code">
