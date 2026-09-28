@@ -280,6 +280,10 @@ class QueryRequest(BaseModel):
             "'Detect deforestation before and after', 'Map wildfire burn severity'."
         ),
     )
+    model: str | None = Field(
+        default=None,
+        description="Selected Claude model: claude-sonnet-5, claude-haiku-4-5, or claude-opus-5-5.",
+    )
     bbox: list[float] | None = Field(
         default=None,
         description="[min_lon, min_lat, max_lon, max_lat]. Required for imagery tools.",

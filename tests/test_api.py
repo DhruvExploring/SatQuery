@@ -300,3 +300,48 @@ def test_query_import_error_returns_500(monkeypatch):
     )
     assert resp.status_code == 500
     assert resp.json()["status"] == "error"
+
+
+def test_models_endpoint_returns_supported_claude_models():
+    resp = client.get("/api/v1/models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "supported_models" in data
+    model_ids = [m["id"] for m in data["supported_models"]]
+    assert "claude-sonnet-5" in model_ids
+    assert "claude-haiku-4-5" in model_ids
+    assert "claude-opus-5-5" in model_ids
+
+
+def test_claude_model_normalization_and_validation():
+    import pytest
+    from backend.config.settings import normalize_claude_model
+
+    # Sonnet 5
+    assert normalize_claude_model("claude-sonnet-5") == "claude-sonnet-5"
+    assert normalize_claude_model("claude-5-sonnet") == "claude-sonnet-5"
+    assert normalize_claude_model("sonnet-5") == "claude-sonnet-5"
+
+    # Haiku 4.5
+    assert normalize_claude_model("claude-haiku-4-5") == "claude-haiku-4-5"
+    assert normalize_claude_model("claude-haiku-4-5-20251001") == "claude-haiku-4-5"
+    assert normalize_claude_model("claude-4-5-haiku") == "claude-haiku-4-5"
+    assert normalize_claude_model("haiku-4.5") == "claude-haiku-4-5"
+
+    # Opus 5.5
+    assert normalize_claude_model("claude-opus-5-5") == "claude-opus-5-5"
+    assert normalize_claude_model("claude-opus-5.5") == "claude-opus-5-5"
+    assert normalize_claude_model("claude-5-5-opus") == "claude-opus-5-5"
+    assert normalize_claude_model("opus-5.5") == "claude-opus-5-5"
+
+    # Default
+    assert normalize_claude_model(None) == "claude-sonnet-5"
+    assert normalize_claude_model("") == "claude-sonnet-5"
+
+    # Disallowed models
+    with pytest.raises(ValueError):
+        normalize_claude_model("gpt-4o")
+    with pytest.raises(ValueError):
+        normalize_claude_model("gpt-5.2")
+    with pytest.raises(ValueError):
+        normalize_claude_model("gemini-1.5-pro")

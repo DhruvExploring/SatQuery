@@ -6,7 +6,7 @@ import base64
 from pathlib import Path
 from typing import Any
 
-from backend.config.settings import settings
+from backend.config.settings import normalize_claude_model, settings
 from backend.vision.openai_provider import (
     _MIME_BY_SUFFIX,
     _SYSTEM_PROMPT,
@@ -33,12 +33,17 @@ class AnthropicVisionProvider:
         mime = _MIME_BY_SUFFIX.get(path.suffix.lower(), "image/png")
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
 
-        model_name = settings.vision_tool_model or "claude-3-5-sonnet-20241022"
-        client = ChatAnthropic(
-            model=model_name,
-            api_key=api_key,
-            max_tokens=1500,
-        ).with_structured_output(_RESPONSE_SCHEMA)
+        model_name = normalize_claude_model(settings.vision_tool_model or "claude-sonnet-5")
+        client_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "api_key": api_key,
+            "max_tokens": 1500,
+        }
+        base_url = settings.vision_tool_base_url or settings.orchestrator_base_url
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        client = ChatAnthropic(**client_kwargs).with_structured_output(_RESPONSE_SCHEMA)
 
         message = HumanMessage(
             content=[
@@ -76,12 +81,17 @@ class AnthropicVisionProvider:
             content.append({"type": "text", "text": label})
             content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
 
-        model_name = settings.vision_tool_model or "claude-3-5-sonnet-20241022"
-        client = ChatAnthropic(
-            model=model_name,
-            api_key=api_key,
-            max_tokens=1500,
-        )
+        model_name = normalize_claude_model(settings.vision_tool_model or "claude-sonnet-5")
+        client_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "api_key": api_key,
+            "max_tokens": 1500,
+        }
+        base_url = settings.vision_tool_base_url or settings.orchestrator_base_url
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        client = ChatAnthropic(**client_kwargs)
 
         message = HumanMessage(content=content)
         response = client.invoke([SystemMessage(content=_COMPARE_SYSTEM_PROMPT), message])

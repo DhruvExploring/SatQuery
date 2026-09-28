@@ -40,6 +40,9 @@ class SatQueryState(TypedDict):
     # Identity for optional LangMem namespaces.
     user_id: NotRequired[str | None]
 
+    # Selected Claude model (claude-sonnet-5, claude-haiku-4-5, or claude-opus-5-5)
+    model: NotRequired[str | None]
+
     bbox: NotRequired[list[float] | None]
     latitude: NotRequired[float | None]
     longitude: NotRequired[float | None]
@@ -156,6 +159,7 @@ def empty_state(query: str, **overrides: Any) -> SatQueryState:
     state: SatQueryState = {
         "query": query,
         "user_id": None,
+        "model": None,
         "bbox": None,
         "latitude": None,
         "longitude": None,

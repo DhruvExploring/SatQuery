@@ -32,9 +32,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+from backend.config.settings import normalize_claude_model
+
+
 def _state_from_request(body: QueryRequest) -> SatQueryState:
+    selected_model = normalize_claude_model(body.model) if body.model else None
     return empty_state(
         query=body.query,
+        model=selected_model,
         bbox=body.bbox,
         region_bbox=body.region_bbox,
         latitude=body.latitude,

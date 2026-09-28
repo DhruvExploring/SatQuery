@@ -18,8 +18,7 @@ NDVI for this GeoTIFF"*, and SatQuery:
    extracts its bands, centroid lat/long, and (once you wire in a geocoding backend) a
    place name, and hands all of it back as a small per-image **knowledge base** —
    before you've even asked a question (see §2).
-1. **Understands the request** — a planner (either a simple keyword matcher, or a real
-   LLM like GPT-5.2 or Claude Sonnet 5) figures out which scientific tool(s) the
+1. **Understands the request** — a planner (Anthropic Claude: Claude Sonnet 5, Claude 4.5 Haiku, or Claude Opus 5.5) figures out which scientific tool(s) the
    request needs, and can call more than one tool in sequence — gathering grounding
    facts or recovering from a failed call — before answering (see §2).
 2. **Fetches or reads the data** — pulls fresh Sentinel-1/Sentinel-2 satellite imagery,
@@ -231,9 +230,8 @@ writes the final narrative answer instead of a templated string.
 
 | `SATQUERY_ORCHESTRATOR_PROVIDER` | Backend | Needs an API key? | Notes |
 | :--- | :--- | :--- | :--- |
-| `mock` **(default)** | Deterministic keyword matcher (`registry.py`) | No | Used in all automated tests. Zero network calls, zero cost, fully reproducible. |
-| `openai` | `ChatOpenAI` (LangChain) | Yes — `SATQUERY_ORCHESTRATOR_API_KEY` or `OPENAI_API_KEY` | Model name is configurable — set `SATQUERY_ORCHESTRATOR_MODEL=gpt-5.2` (the target model) or any other OpenAI-compatible chat model. |
-| `anthropic` | `ChatAnthropic` (LangChain) | Yes — `SATQUERY_ORCHESTRATOR_API_KEY` or `ANTHROPIC_API_KEY` | Set `SATQUERY_ORCHESTRATOR_MODEL` to a Claude model name. |
+| `anthropic` **(default)** | `ChatAnthropic` (LangChain) | Yes — `SATQUERY_ORCHESTRATOR_API_KEY` or `ANTHROPIC_API_KEY` | Target models: `claude-sonnet-5` (default), `claude-haiku-4-5`, `claude-opus-5-5`. |
+| `mock` | Deterministic keyword matcher (`registry.py`) | No | Used in automated unit tests. Zero network calls, zero cost, fully reproducible. |
 
 `SATQUERY_ORCHESTRATOR_SYNTHESIZE_ANSWER=true` (default, only takes effect when the
 provider isn't `mock`) makes `respond()` ask the same LLM to write a short 2–4 sentence
@@ -276,7 +274,7 @@ comparison never requires that alignment.
 
 | `SATQUERY_VISION_TOOL_ENABLED` | Default: `false`. Must be explicitly turned on. |
 | :--- | :--- |
-| `SATQUERY_VISION_TOOL_PROVIDER=openai` **(default when enabled)** | Hosted OpenAI-compatible vision model (default `SATQUERY_VISION_TOOL_MODEL=gpt-4o-mini`). Needs `SATQUERY_VISION_TOOL_API_KEY` or `OPENAI_API_KEY`. |
+| `SATQUERY_VISION_TOOL_PROVIDER=anthropic` **(default when enabled)** | Hosted Anthropic Claude vision model (default `SATQUERY_VISION_TOOL_MODEL=claude-sonnet-5`; supports `claude-sonnet-5`, `claude-haiku-4-5`, `claude-opus-5-5`). Needs `SATQUERY_VISION_TOOL_API_KEY` or `ANTHROPIC_API_KEY`. |
 | `SATQUERY_VISION_TOOL_PROVIDER=local` | Talks over HTTP (`POST /infer`) to `local_model_server/`, a separate FastAPI service running **InternVL-1B** or **EarthMind-4B** on your own hardware. |
 
 Switching between InternVL and EarthMind for the local path is done by restarting
@@ -322,25 +320,25 @@ Tools 4–8 need **no credentials at all** (Tool 4 is Open-Meteo's free public A
 5–8 are pure offline computation).
 
 ### 4.2 Orchestrator role
-
+ 
 | Variable | Default | Options |
 | :--- | :--- | :--- |
-| `SATQUERY_ORCHESTRATOR_PROVIDER` | `mock` | `mock` \| `openai` \| `anthropic` |
-| `SATQUERY_ORCHESTRATOR_MODEL` | `gpt-5.2` | Any model name your provider accepts |
-| `SATQUERY_ORCHESTRATOR_API_KEY` | *(empty → falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`)* | |
-| `SATQUERY_ORCHESTRATOR_BASE_URL` | *(empty)* | Optional proxy / Azure-style endpoint override |
+| `SATQUERY_ORCHESTRATOR_PROVIDER` | `anthropic` | `anthropic` (production) \| `mock` (unit tests) |
+| `SATQUERY_ORCHESTRATOR_MODEL` | `claude-sonnet-5` | `claude-sonnet-5` \| `claude-haiku-4-5` \| `claude-opus-5-5` |
+| `SATQUERY_ORCHESTRATOR_API_KEY` | *(empty → falls back to `ANTHROPIC_API_KEY`)* | |
+| `SATQUERY_ORCHESTRATOR_BASE_URL` | *(empty)* | Optional proxy / custom endpoint override |
 | `SATQUERY_ORCHESTRATOR_SYNTHESIZE_ANSWER` | `true` | Only takes effect when provider ≠ `mock` |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | *(empty)* | Shared fallback keys, also used by the vision tool's `openai` provider |
+| `ANTHROPIC_API_KEY` | *(empty)* | Anthropic API key |
 
 ### 4.3 Vision-tool role
 
 | Variable | Default | Options |
 | :--- | :--- | :--- |
 | `SATQUERY_VISION_TOOL_ENABLED` | `false` | `true` \| `false` |
-| `SATQUERY_VISION_TOOL_PROVIDER` | `openai` | `openai` \| `local` |
-| `SATQUERY_VISION_TOOL_MODEL` | `gpt-4o-mini` | Any OpenAI-compatible vision model name |
-| `SATQUERY_VISION_TOOL_API_KEY` | *(empty → falls back to `OPENAI_API_KEY`)* | |
-| `SATQUERY_VISION_TOOL_BASE_URL` | *(empty)* | For `openai`: optional endpoint override. For `local`: the `local_model_server` URL (`http://localhost:8080` native, `http://local-vlm:8080` in Compose) |
+| `SATQUERY_VISION_TOOL_PROVIDER` | `anthropic` | `anthropic` \| `local` |
+| `SATQUERY_VISION_TOOL_MODEL` | `claude-sonnet-5` | `claude-sonnet-5` \| `claude-haiku-4-5` \| `claude-opus-5-5` |
+| `SATQUERY_VISION_TOOL_API_KEY` | *(empty → falls back to `ANTHROPIC_API_KEY`)* | |
+| `SATQUERY_VISION_TOOL_BASE_URL` | *(empty)* | For `anthropic`: optional endpoint override. For `local`: the `local_model_server` URL (`http://localhost:8080` native, `http://local-vlm:8080` in Compose) |
 | `SATQUERY_VISION_TOOL_TIMEOUT_S` | `60` | Request timeout in seconds |
 
 ### 4.4 Networking / deployment

@@ -53,9 +53,14 @@ def synthesize_final_answer(
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        from backend.orchestrator.llm import _build_base_llm
-
-        client = _build_base_llm()
+        model_choice = state.get("model")
+        if model_choice:
+            try:
+                client = _build_base_llm(model_override=model_choice)
+            except TypeError:
+                client = _build_base_llm()
+        else:
+            client = _build_base_llm()
         context = {
             "query": state.get("query"),
             "initial_description": state.get("initial_description"),

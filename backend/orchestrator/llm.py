@@ -8,8 +8,7 @@ user's raw question -- there's no other deterministic source for "what place
 name did they mean," and tools (Tool 10 in particular) must never try to parse
 that out of a raw sentence themselves. See _llm_plan's enrichment step and
 registry.py::trusted_args_for_tool's TOOL_GEOCODE_FORWARD/TOOL_SCENE_IDENTITY
-branches.
-The OpenAI/Claude toggle from the existing project is preserved.
+Configured exclusively for Claude (Claude Sonnet 5, Claude 4.5 Haiku, Claude Opus 5.5).
 """
 from __future__ import annotations
 
@@ -127,25 +126,8 @@ def _build_skillkit() -> Any | None:
         logger.warning("SkillKit disabled: %r", exc)
         return None
 
-@functools.lru_cache(maxsize=1)
-def _build_base_llm() -> Any:
-    if settings.orchestrator_provider == "openai":
-        if not settings.orchestrator_api_key:
-            raise ValueError(
-                "SATQUERY_ORCHESTRATOR_PROVIDER=openai but no API key is set "
-                "(SATQUERY_ORCHESTRATOR_API_KEY or OPENAI_API_KEY)."
-            )
-        from langchain_openai import ChatOpenAI
-        kwargs: dict[str, Any] = {
-            "model": settings.orchestrator_model,
-            "api_key": settings.orchestrator_api_key,
-            "temperature": 0,
-            "max_tokens": 1500,
-        }
-        if settings.orchestrator_base_url:
-            kwargs["base_url"] = settings.orchestrator_base_url
-        return ChatOpenAI(**kwargs)
-
+@functools.lru_cache(maxsize=4)
+def _build_base_llm(model_override: str | None = None) -> Any:
     if settings.orchestrator_provider == "anthropic":
         if not settings.orchestrator_api_key:
             raise ValueError(
@@ -153,12 +135,21 @@ def _build_base_llm() -> Any:
                 "(SATQUERY_ORCHESTRATOR_API_KEY or ANTHROPIC_API_KEY)."
             )
         from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(
-            model=settings.orchestrator_model,
-            api_key=settings.orchestrator_api_key,
-        )
+        from backend.config.settings import normalize_claude_model
 
-    raise ValueError("No LLM provider is enabled (SATQUERY_ORCHESTRATOR_PROVIDER=mock).")
+        target_model = normalize_claude_model(model_override or settings.orchestrator_model)
+        kwargs: dict[str, Any] = {
+            "model": target_model,
+            "api_key": settings.orchestrator_api_key,
+        }
+        if settings.orchestrator_base_url:
+            kwargs["base_url"] = settings.orchestrator_base_url
+        return ChatAnthropic(**kwargs)
+
+    raise ValueError(
+        f"No Claude LLM provider is enabled (SATQUERY_ORCHESTRATOR_PROVIDER={settings.orchestrator_provider!r}). "
+        "SatQuery only runs on Claude (claude-sonnet-5, claude-haiku-4-5, claude-opus-5-5)."
+    )
 
 _PLAN_SCHEMA = {
     "title": "Plan",
@@ -208,9 +199,9 @@ _PLAN_SCHEMA = {
     "required": ["action", "tool", "args", "reason", "place_name", "landmark_names"],
 }
 
-@functools.lru_cache(maxsize=1)
-def _build_llm_client() -> Any:
-    base = _build_base_llm()
+@functools.lru_cache(maxsize=4)
+def _build_llm_client(model_override: str | None = None) -> Any:
+    base = _build_base_llm(model_override)
     kit = _build_skillkit()
     if kit is not None:
         base = base.bind_tools(kit.tools)
@@ -288,7 +279,14 @@ def _llm_plan(state: SatQueryState) -> Plan:
             {"tool": r.get("tool"), "result": r.get("result")} for r in tool_results
         ]
 
-    client = _build_llm_client()
+    model_choice = state.get("model")
+    if model_choice:
+        try:
+            client = _build_llm_client(model_override=model_choice)
+        except TypeError:
+            client = _build_llm_client()
+    else:
+        client = _build_llm_client()
     memory_tools = _build_memory_tools(state.get("user_id"))
     if memory_tools:
         client = client.bind_tools(memory_tools)

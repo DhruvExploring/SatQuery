@@ -173,6 +173,7 @@ export default function App() {
   const [liveSteps, setLiveSteps] = useState([]);
   const [backendUp, setBackendUp] = useState(null);
   const [modelsStatus, setModelsStatus] = useState(null);
+  const [selectedModel, setSelectedModel] = useState('claude-sonnet-5');
 
   // Modals & Popups
   const [isWorkflowsOpen, setIsWorkflowsOpen] = useState(false);
@@ -193,7 +194,12 @@ export default function App() {
       if (mounted) setBackendUp(res.ok);
     });
     fetchModelsStatus().then((status) => {
-      if (mounted && status) setModelsStatus(status);
+      if (mounted && status) {
+        setModelsStatus(status);
+        if (status.orchestrator?.model) {
+          setSelectedModel(status.orchestrator.model);
+        }
+      }
     });
     return () => {
       mounted = false;
@@ -472,6 +478,7 @@ export default function App() {
 
     const payload = {
       query: fullQuery,
+      model: selectedModel,
       ...buildFilePayload(mode, slotA, slotB)
     };
 
@@ -683,6 +690,23 @@ export default function App() {
           </div>
 
           <div className="vpro-header-right">
+            {/* Claude Model Selector (Restricted to Claude Sonnet 5, 4.5 Haiku, Opus 5.5) */}
+            <div className="claude-model-selector" title="Active LLM: Anthropic Claude">
+              <span className="claude-sparkle">✦</span>
+              <select
+                className="claude-model-dropdown"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isRunning}
+                aria-label="Select Claude Model"
+                id="claude-model-dropdown"
+              >
+                <option value="claude-sonnet-5">Claude Sonnet 5</option>
+                <option value="claude-haiku-4-5">Claude 4.5 Haiku</option>
+                <option value="claude-opus-5-5">Claude Opus 5.5</option>
+              </select>
+            </div>
+
             <button
               type="button"
               className="btn-new-convo"

@@ -298,6 +298,48 @@ html, body {
   line-height: 1;
 }
 
+.claude-model-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 18px;
+  background: var(--clay-slate-sunken);
+  box-shadow: var(--shadow-sunken-well);
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  transition: all 0.2s ease;
+}
+
+.claude-model-selector:hover {
+  border-color: rgba(234, 88, 12, 0.65);
+  box-shadow: 0 0 10px rgba(234, 88, 12, 0.2);
+}
+
+.claude-model-selector .claude-sparkle {
+  color: #fb923c;
+  font-size: 0.82rem;
+  text-shadow: 0 0 6px rgba(251, 146, 60, 0.8);
+  user-select: none;
+}
+
+.claude-model-dropdown {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fdba74;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0.1rem 0;
+  font-family: inherit;
+}
+
+.claude-model-dropdown option {
+  background: #181d24;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
 .connection-status {
   display: flex;
   align-items: center;
