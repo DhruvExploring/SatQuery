@@ -14,6 +14,7 @@ import logging
 from typing import Any
 
 from backend.config.settings import settings
+from backend.orchestrator.llm import _build_base_llm
 from backend.orchestrator.prompts import load_prompt
 from backend.orchestrator.state import SatQueryState
 
