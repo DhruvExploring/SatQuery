@@ -160,6 +160,8 @@ def tool_node(state: SatQueryState) -> dict[str, Any]:
             path = (result.get("file") or {}).get("file_path")
             if path:
                 update["input_file"] = path
+                if not state.get("lulc_raster_path"):
+                    update["lulc_raster_path"] = path
             # Any successful inspection reveals the file's real location --
             # make it available to whatever tool gets picked next (e.g. a
             # fetch_* tool that was only missing a bbox) instead of ending

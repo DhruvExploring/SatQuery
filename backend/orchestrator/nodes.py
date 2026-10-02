@@ -99,9 +99,13 @@ def load_knowledge_base(state: SatQueryState) -> dict[str, Any]:
     ingest_graph.py) so the VLM's first description can be grounded in it.
     """
     if state.get("knowledge_base"):
-        return {
+        update: dict[str, Any] = {
             "execution_trace": [trace_entry("load_knowledge_base", "provided inline")]
         }
+        kb_file_path = state["knowledge_base"].get("file_path")
+        if kb_file_path and not state.get("lulc_raster_path"):
+            update["lulc_raster_path"] = kb_file_path
+        return update
 
     input_file = state.get("input_file")
     if not input_file:
@@ -111,24 +115,34 @@ def load_knowledge_base(state: SatQueryState) -> dict[str, Any]:
 
     kb_path = Path(input_file).with_suffix(".kb.json")
     if not kb_path.exists():
-        return {
+        update = {
             "execution_trace": [
                 trace_entry("load_knowledge_base", "no knowledge base on disk")
             ]
         }
+        if not state.get("lulc_raster_path"):
+            update["lulc_raster_path"] = input_file
+        return update
 
     try:
         knowledge_base = json.loads(kb_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("Could not load knowledge base from %s: %r", kb_path, exc)
-        return {
+        update = {
             "execution_trace": [trace_entry("load_knowledge_base", "failed to load")]
         }
+        if not state.get("lulc_raster_path"):
+            update["lulc_raster_path"] = input_file
+        return update
 
-    return {
+    update = {
         "knowledge_base": knowledge_base,
         "execution_trace": [trace_entry("load_knowledge_base", "loaded from disk")],
     }
+    kb_file_path = knowledge_base.get("file_path") or input_file
+    if kb_file_path and not state.get("lulc_raster_path"):
+        update["lulc_raster_path"] = kb_file_path
+    return update
 
 
 def vlm_initial_description(state: SatQueryState) -> dict[str, Any]:

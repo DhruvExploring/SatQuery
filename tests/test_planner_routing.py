@@ -7,7 +7,9 @@ from backend.orchestrator.registry import (
     TOOL_MULTI,
     TOOL_OPTICAL,
     TOOL_SAR,
+    TOOL_SPATIAL,
     TOOL_WEATHER,
+    location_ready_for_tool,
     match_tool_from_query,
     trusted_args_for_tool,
 )
@@ -84,3 +86,39 @@ def test_multispectral_trusted_args_keep_explicit_bands():
     )
     args = trusted_args_for_tool(TOOL_MULTI, state)
     assert args["bands"] == ["B04", "B08"]
+
+
+def test_spatial_landcover_resolves_path_from_input_file():
+    state = empty_state(
+        "Analyze land cover and terrain",
+        input_file="49_optical.tif",
+    )
+    args = trusted_args_for_tool(TOOL_SPATIAL, state)
+    assert args["lulc_raster_path"] == "49_optical.tif"
+    assert location_ready_for_tool(TOOL_SPATIAL, state)
+    plan = make_plan(state)
+    assert plan["action"] == "call_tool"
+    assert plan["tool"] == "analyze_spatial_landcover_terrain"
+    assert plan["args"]["lulc_raster_path"] == "49_optical.tif"
+
+
+def test_spatial_landcover_resolves_path_from_knowledge_base():
+    state = empty_state(
+        "Analyze land cover and terrain",
+        knowledge_base={"file_path": "uploads/some_scene.tif", "place_name": "Delhi"},
+    )
+    args = trusted_args_for_tool(TOOL_SPATIAL, state)
+    assert args["lulc_raster_path"] == "uploads/some_scene.tif"
+    assert location_ready_for_tool(TOOL_SPATIAL, state)
+
+
+def test_spatial_landcover_resolves_dem_and_lulc_from_pair():
+    state = empty_state(
+        "tell me the land topography and elevation in this area",
+        raster_before_path="sample_worldcover_10m.tif",
+        raster_after_path="sample_copernicus_dem_30m.tif",
+    )
+    args = trusted_args_for_tool(TOOL_SPATIAL, state)
+    assert args["lulc_raster_path"] == "sample_worldcover_10m.tif"
+    assert args["dem_raster_path"] == "sample_copernicus_dem_30m.tif"
+    assert location_ready_for_tool(TOOL_SPATIAL, state)

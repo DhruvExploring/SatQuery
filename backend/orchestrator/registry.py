@@ -112,6 +112,62 @@ def _tool7_paths(state: SatQueryState) -> tuple[str | None, str | None]:
     return before, after
 
 
+def _tool8_paths(state: SatQueryState) -> tuple[str | None, str | None]:
+    """Resolve lulc_raster_path and dem_raster_path from state.
+
+    Falls back to knowledge_base ("geotiff json"), input_file, or prior
+    tool outputs when lulc_raster_path is not explicitly provided on state.
+    If pair rasters (raster_before_path, raster_after_path) are present,
+    intelligently distinguishes LULC from DEM based on filename hints or query.
+    """
+    lulc = state.get("lulc_raster_path")
+    dem = state.get("dem_raster_path")
+
+    before = state.get("raster_before_path")
+    after = state.get("raster_after_path")
+
+    # If pair rasters are available and either lulc or dem is missing:
+    if (before or after) and (not lulc or not dem):
+        candidates = [p for p in (before, after) if p]
+        dem_candidate = None
+        for c in candidates:
+            c_lower = str(c).lower()
+            if any(k in c_lower for k in ("dem", "elevation", "slope", "copernicus", "altitude", "terrain")):
+                dem_candidate = c
+                break
+
+        if dem_candidate and not dem:
+            dem = dem_candidate
+            if not lulc:
+                non_dem = [c for c in candidates if c != dem_candidate]
+                if non_dem:
+                    lulc = non_dem[0]
+
+        if not lulc and candidates:
+            lulc = candidates[0]
+            if len(candidates) > 1 and not dem:
+                query_lower = (state.get("query") or "").lower()
+                if any(w in query_lower for w in ("topography", "elevation", "slope", "dem", "height", "terrain")):
+                    dem = candidates[1]
+
+    if not lulc:
+        kb_path = (state.get("knowledge_base") or {}).get("file_path")
+        lulc = (
+            kb_path
+            or state.get("input_file")
+            or _last_raster_path(state)
+            or state.get("raster_after_path")
+            or state.get("raster_before_path")
+        )
+
+    return lulc, dem
+
+
+def _tool8_lulc_path(state: SatQueryState) -> str | None:
+    lulc, _ = _tool8_paths(state)
+    return lulc
+
+
 def _default_change_threshold(before: str | None, after: str | None) -> float:
     """0.15 suits a -1..1 vegetation index; SAR backscatter is in dB, where a
     real flood/burn signal is several dB, so a much larger absolute
@@ -307,9 +363,10 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
             "generate_change_mask": state.get("generate_change_mask", True),
         }
     if tool == TOOL_SPATIAL:
+        lulc, dem = _tool8_paths(state)
         return {
-            "lulc_raster_path": state.get("lulc_raster_path"),
-            "dem_raster_path": state.get("dem_raster_path"),
+            "lulc_raster_path": lulc,
+            "dem_raster_path": dem,
             "zone_mask_path": state.get("zone_mask_path") or state.get("last_change_mask_path"),
             "class_legend": state.get("class_legend"),
             "zone_legend": state.get("zone_legend"),
@@ -320,7 +377,7 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
         return {
             "pre_raster_path": state.get("raster_before_path"),
             "post_raster_path": state.get("raster_after_path"),
-            "lulc_raster_path": state.get("lulc_raster_path"),
+            "lulc_raster_path": _tool8_lulc_path(state),
             "dem_raster_path": state.get("dem_raster_path"),
             "output_dir": state.get("analysis_output_dir"),
         }
@@ -328,7 +385,7 @@ def trusted_args_for_tool(tool: str, state: SatQueryState) -> dict[str, Any]:
         return {
             "sar_pre_raster_path": state.get("raster_before_path"),
             "sar_post_raster_path": state.get("raster_after_path"),
-            "lulc_raster_path": state.get("lulc_raster_path"),
+            "lulc_raster_path": _tool8_lulc_path(state),
             "dem_raster_path": state.get("dem_raster_path"),
             "output_dir": state.get("analysis_output_dir"),
             "bbox": state.get("bbox"),
@@ -841,7 +898,7 @@ def location_ready_for_tool(tool: str, state: SatQueryState) -> bool:
         before, after = _tool7_paths(state)
         return bool(before and after)
     if loc == "lulc":
-        return bool(state.get("lulc_raster_path"))
+        return bool(_tool8_lulc_path(state))
     if loc == "vlm":
         return bool(state.get("input_file") or _last_raster_path(state))
     if loc == "weather":
@@ -850,7 +907,7 @@ def location_ready_for_tool(tool: str, state: SatQueryState) -> bool:
         return bool(
             state.get("raster_before_path")
             and state.get("raster_after_path")
-            and state.get("lulc_raster_path")
+            and _tool8_lulc_path(state)
         )
     if loc == "mission_drought":
         has_file = bool(state.get("input_file") or _last_raster_path(state))
@@ -902,7 +959,7 @@ def _missing_input_reason(tool: str) -> str:
         "weather": f"{tool} requires bbox or latitude and longitude.",
         "file": f"{tool} requires a GeoTIFF input file.",
         "files": f"{tool} requires raster_before_path and raster_after_path.",
-        "lulc": f"{tool} requires lulc_raster_path.",
+        "lulc": f"{tool} requires lulc_raster_path or an input GeoTIFF file.",
         "vlm": f"{tool} requires a rendered image or GeoTIFF (input_file) to interpret.",
         "mission_pair_lulc": (
             f"{tool} requires raster_before_path, raster_after_path, and lulc_raster_path."

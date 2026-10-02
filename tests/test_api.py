@@ -249,6 +249,21 @@ def test_query_tool8_landcover_succeeds():
     assert body["plan"]["args"]["dem_raster_path"] == "dummy_dem.tif"
 
 
+def test_query_tool8_landcover_with_input_file_succeeds():
+    resp = client.post(
+        "/api/v1/query",
+        json={
+            "query": "Analyze land cover and terrain for this raster",
+            "input_file": "dummy_scene.tif",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["plan"]["tool"] == "analyze_spatial_landcover_terrain"
+    assert body["plan"]["args"]["lulc_raster_path"] == "dummy_scene.tif"
+
+
 def test_query_against_uploaded_image_returns_kb_and_initial_description(tmp_path):
     import json
 
